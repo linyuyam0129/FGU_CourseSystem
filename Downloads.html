@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>學程手冊下載</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f7f7f7;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: #333;
+    }
+
+    .container {
+      background-color: #ffffff;
+      padding: 30px 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+      text-align: center;
+      max-width: 960px;
+      width: 100%;
+    }
+
+    h1 {
+      color: #2e7d32;
+      font-size: 28px;
+      margin-bottom: 20px;
+    }
+
+    p {
+      font-size: 16px;
+      margin-bottom: 25px;
+      color: #555;
+    }
+
+    .manuals {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      justify-items: center;
+      margin-top: 10px;
+    }
+
+    .manuals a {
+      text-decoration: none;
+      background-color: #00796b;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 10px;
+      transition: background-color 0.3s ease, transform 0.2s;
+      width: 100%;
+      max-width: 220px;
+      text-align: center;
+    }
+
+    .manuals a:hover {
+      background-color: #004d40;
+      transform: scale(1.05);
+    }
+
+    .nav-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+
+    .nav-buttons a {
+      background-color: #ff8a65;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: background-color 0.3s ease;
+    }
+
+    .nav-buttons a:hover {
+      background-color: #e64a19;
+    }
+
+    /* 響應式設計 */
+    @media (max-width: 768px) {
+      .manuals {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 480px) {
+      .manuals {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="nav-buttons">    
+    <a href="login.php">登出</a>
+    <a href="index.php">回首頁</a>
+    <a href="course.php">課程頁面</a>
+  </div>
+
+  <h1>學程手冊下載</h1>
+  <p>請選擇並下載學年度的學程手冊：</p>
+
+  <div class="manuals">
+    <a href="學程手冊/113學年度學程手冊.pdf" download>113 學年度</a>
+    <a href="學程手冊/112學年度學程手冊.pdf" download>112 學年度</a>
+    <a href="學程手冊/111學年度學程手冊.pdf" download>111 學年度</a>
+    <a href="學程手冊/110學年度學程手冊.pdf" download>110 學年度</a>
+    <a href="學程手冊/109學年度學程手冊.pdf" download>109 學年度</a>
+    <a href="學程手冊/108學年度學程手冊.pdf" download>108 學年度</a>
+    <a href="學程手冊/107學年度學程手冊.pdf" download>107 學年度</a>
+    <a href="學程手冊/106學年度學程手冊.pdf" download>106 學年度</a>
+    <a href="學程手冊/105學年度學程手冊.pdf" download>105 學年度</a>
+  </div>
+</div>
+
+</body>
+</html>
