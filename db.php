@@ -1,15 +1,10 @@
 <?php
-$servername = "localhost";
-$username = "root";
-$password = "";
+$servername = "fgumysqlserver.mysql.database.azure.com";
+$username = "fguadmin";
+$password = "brenden@0129";
 $dbname = "school_db";
 
-$conn = new mysqli($servername, $username, $password, $dbname);
-
-if ($conn->connect_error) {
-    http_response_code(500);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => '資料庫連接失敗: ' . $conn->connect_error], JSON_UNESCAPED_UNICODE);
-    exit();
-}
-?>
+// 建立 SSL 加密連線
+$conn = mysqli_init();
+mysqli_ssl_set($conn, NULL, NULL, NULL, NULL, NULL);  // 使用預設憑證
+mysqli_real_connect($conn, $servername, $username, $password, $dbname, 3306, NULL, MYSQLI_CLIENT_SSL);
