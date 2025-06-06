@@ -257,6 +257,7 @@ $missing_result = $stmt_missing->get_result();
     <div class="credit">
       已修學分數：<?= $total_credits ?> 學分<br>
       畢業門檻需修滿 128 學分
+      通識教育32學分 院跟系則看各自規定
     </div>
 
     <div class="courses">
