@@ -11,10 +11,11 @@ $stmt = $conn->prepare($sql);
 $stmt->bind_param("s", $student_id);
 $stmt->execute();
 $stmt->store_result();
-$stmt->bind_result($id, $stored_student_id, $name, $department, $user_group, $email, $stored_password, $salt);
-$stmt->fetch();
 
 if ($stmt->num_rows === 1) {
+    $stmt->bind_result($id, $stored_student_id, $name, $department, $user_group, $email, $stored_password, $salt);
+    $stmt->fetch();
+
     if (password_verify($password . $salt, $stored_password)) {
         // 成功登入：寫入 session
         session_regenerate_id(true); // 防止 session fixation
@@ -24,18 +25,20 @@ if ($stmt->num_rows === 1) {
         $_SESSION['department'] = $department;
         $_SESSION['user_group'] = $user_group;
 
+        $stmt->close();
+        $conn->close();
+
         header("Location: index.php");
         exit();
     } else {
         $_SESSION['login_error'] = "密碼錯誤，請再試一次！";
-        header("Location: login.php");
-        exit();
     }
 } else {
     $_SESSION['login_error'] = "查無此學號，請重新輸入！";
-    header("Location: login.php");
-    exit();
 }
 
 $stmt->close();
 $conn->close();
+
+header("Location: login.php");
+exit();
