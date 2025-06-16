@@ -25,12 +25,12 @@ $_SESSION['department'] = $user['department'];
 $_SESSION['user_group'] = $user['user_group'];
 
 // 修正後的 SQL 語句：使用 UNION ALL 合併 selected_courses 和 completed_courses，
-// 並為兩者都 JOIN course_list 以獲取 課程名稱 和 學分。
+// 並為兩者都 JOIN course_list 以獲取 科目名稱 和 學分數。
 $sql_courses = "
     SELECT
         sc.course_code,
-        cl.課程名稱 AS course_name,
-        cl.學分 AS credits,
+        cl.科目名稱 AS course_name,
+        cl.學分數 AS credits,
         sc.semester,
         'selected' AS source_table -- 標識來源表
     FROM selected_courses sc
@@ -41,8 +41,8 @@ $sql_courses = "
 
     SELECT
         cc.course_code,
-        cl.課程名稱 AS course_name,
-        cl.學分 AS credits,
+        cl.科目名稱 AS course_name,
+        cl.學分數 AS credits,
         cc.semester,
         'completed' AS source_table -- 標識來源表
     FROM completed_courses cc
@@ -558,16 +558,16 @@ $graduation_credits_required = 128;
     <div class="container" style="margin-top: -10px;">
         <div class="panel credit-panel">
             <div class="panel-header" onclick="togglePanel(this)">
-                <h3 class="credit"><i class="fas fa-graduation-cap"></i> 學分統計</h3>
+                <h3 class="credit"><i class="fas fa-graduation-cap"></i> 學分數統計</h3>
                 <span class="toggle-icon"></span>
             </div>
             <div class="panel-content">
                 <div class="credit-display">
-                    已修學分數：<span><?= $total_credits ?></span> / <?= $graduation_credits_required ?> 學分
+                    已修學分數：<span><?= $total_credits ?></span> / <?= $graduation_credits_required ?> 學分數
                     <div class="progress-bar-container">
                         <div class="progress-bar-fill" id="creditProgressBar" style="width: 0%;"></div>
                     </div>
-                    <small>畢業門檻需修滿 <?= $graduation_credits_required ?> 學分。通識教育32學分，院與系則依各自規定。</small>
+                    <small>畢業門檻需修滿 <?= $graduation_credits_required ?> 學分數。通識教育32學分數，院與系則依各自規定。</small>
                 </div>
             </div>
         </div>
@@ -597,7 +597,7 @@ $graduation_credits_required = 128;
                             <?php foreach ($completed_courses as $row): ?>
                                 <li>
                                     <strong><?= htmlspecialchars($row['course_name']) ?></strong>（<?= htmlspecialchars($row['course_code']) ?>）<br>
-                                    <span>學分：<?= $row['credits'] ?>｜完成學期：<?= htmlspecialchars($row['semester']) ?></span>
+                                    <span>學分數：<?= $row['credits'] ?>｜完成學期：<?= htmlspecialchars($row['semester']) ?></span>
                                 </li>
                             <?php endforeach; ?>
                         <?php endif; ?>
@@ -611,8 +611,8 @@ $graduation_credits_required = 128;
                         <?php else: ?>
                             <?php while ($row = $missing_result->fetch_assoc()): ?>
                                 <li>
-                                    <strong><?= htmlspecialchars($row['課程名稱']) ?></strong>（<?= htmlspecialchars($row['課程代碼']) ?>）<br>
-                                    <span>學分：<?= $row['學分'] ?></span>
+                                    <strong><?= htmlspecialchars($row['科目名稱']) ?></strong>（<?= htmlspecialchars($row['課程代碼']) ?>）<br>
+                                    <span>學分數：<?= $row['學分數'] ?></span>
                                 </li>
                             <?php endwhile; ?>
                         <?php endif; ?>

@@ -263,7 +263,7 @@
             background: #e57373;
         }
 
-        /* --- 總學分顯示 --- */
+        /* --- 總學分數顯示 --- */
         #credit-total {
             margin-top: 20px;
             font-size: 18px; /* 放大字體 */
@@ -318,7 +318,7 @@
           💡提示：將課程從下方課程列表拖曳至右方課表即可加入。點擊我的課表中的課程即可移除。
     </p>
             <div class="search-controls">
-                <input type="text" id="search-input" placeholder="輸入課程名稱 / 教師 / 代碼">
+                <input type="text" id="search-input" placeholder="輸入科目名稱 / 教師 / 代碼">
                 <select id="filter-type">
                     <option value="">全部修別</option>
                     <option value="必修">必修</option>
@@ -407,7 +407,7 @@
                 <div id="nofixed-list"></div>
             </div>
 
-            <p id="credit-total">已選學分：0 學分</p>
+            <p id="credit-total">已選學分數：0 學分</p>
         </div>
     </div>
 
@@ -420,7 +420,7 @@
         const days = ["一", "二", "三", "四", "五"];
         const tbody = document.getElementById("timetable-body");
         const nofixedList = document.getElementById("nofixed-list");
-        let selectedCourses = {}; // 儲存已選課程的「課程名稱: 學分」對
+        let selectedCourses = {}; // 儲存已選課程的「科目名稱: 學分數」對
 
         // 新增此函數
 function fetchAndDisplaySelectedCourses() {
@@ -445,11 +445,11 @@ function fetchAndDisplaySelectedCourses() {
                     const li = document.createElement('li');
                     // 這裡需要確保 fetch_timetable.php 返回 '課程代碼'
                     li.innerHTML = `
-                        <span>${course.課程名稱} - <span class="math-inline">\{course\.時間\} \(</span>{course.學分}學分)</span>
+                        <span>${course.科目名稱} - <span class="math-inline">\{course\.時間\} \(</span>{course.學分數}學分數)</span>
                         <button class="drop-button" data-course-code="${course.課程代碼}">刪除</button>
                     `;
                     selectedCoursesList.appendChild(li);
-                    totalCredits += parseInt(course.學分);
+                    totalCredits += parseInt(course.學分數);
                 });
             }
             document.getElementById('total-credits').textContent = totalCredits;
@@ -523,13 +523,13 @@ function fetchAndDisplaySelectedCourses() {
             }
 
             const table = document.createElement("table");
-            table.innerHTML = `<tr><th>課程名稱</th><th>時間</th><th>教師</th><th>修別</th><th>學分</th><th>教室</th><th>通識課群</th></tr>`;
+            table.innerHTML = `<tr><th>科目名稱</th><th>時間</th><th>教師</th><th>修別</th><th>學分數</th><th>教室</th><th>通識課群</th></tr>`;
             courses.forEach(c => {
                 const tr = document.createElement("tr");
                 tr.draggable = true; // 設定為可拖曳
-                tr.dataset.name = c.課程名稱;
+                tr.dataset.name = c.科目名稱;
                 tr.dataset.time = c.時間;
-                tr.dataset.credit = c.學分;
+                tr.dataset.credit = c.學分數;
                 tr.dataset.teacher = c.教師;
                 tr.dataset.type = c.修別;
                 tr.dataset.room = c.教室;
@@ -540,11 +540,11 @@ function fetchAndDisplaySelectedCourses() {
                 const genEdGroup = c.通識課群 ? c.通識課群 : '—'; // 如果沒有通識課群則顯示 —
 
                 tr.innerHTML = `
-                    <td>${c.課程名稱}</td>
+                    <td>${c.科目名稱}</td>
                     <td>${c.時間}</td>
                     <td>${c.教師}</td>
                     <td>${c.修別}</td>
-                    <td>${c.學分}</td>
+                    <td>${c.學分數}</td>
                     <td>${c.教室}</td>
                     <td>${genEdGroup}</td>`;
                 table.appendChild(tr);
@@ -593,9 +593,9 @@ function fetchAndDisplaySelectedCourses() {
             const courseData = JSON.parse(ev.dataTransfer.getData("text/plain"));
             const { name, time, credit, code } = courseData; // 取得課程代碼
 
-            // 如果課程名稱為空，通常不應發生，但做個防範
+            // 如果科目名稱為空，通常不應發生，但做個防範
             if (!name) {
-                console.warn("嘗試拖曳無課程名稱的項目");
+                console.warn("嘗試拖曳無科目名稱的項目");
                 return;
             }
 
@@ -667,15 +667,15 @@ function fetchAndDisplaySelectedCourses() {
                     if (cell) {
                         cell.textContent = name;
                         cell.classList.add("highlight");
-                        cell.dataset.courseName = name; // 將課程名稱儲存到 dataset
+                        cell.dataset.courseName = name; // 將科目名稱儲存到 dataset
                         cell.dataset.courseCode = code; // 儲存課程代碼，用於移除
                         cell.onclick = removeCourse; // 綁定點擊事件來移除課程
                     }
                 });
             });
 
-            // 只有第一次加入該課程時才更新學分並存入資料庫
-            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存課程名稱、學分和代碼
+            // 只有第一次加入該課程時才更新學分數並存入資料庫
+            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
             updateCreditDisplay();
             saveSelectedCourse(code, name); // 儲存到資料庫，傳遞課程代碼和名稱
         }
@@ -753,11 +753,11 @@ function fetchAndDisplaySelectedCourses() {
                         const li = document.createElement('li');
                         // 這裡需要確保 fetch_timetable.php 返回 '課程代碼'
                         li.innerHTML = `
-                            <span>${course.課程名稱} - ${course.時間} (${course.學分}學分)</span>
+                            <span>${course.科目名稱} - ${course.時間} (${course.學分數}學分數)</span>
                             <button class="drop-button" data-course-code="${course.課程代碼}">刪除</button>
                         `;
                         selectedCoursesList.appendChild(li);
-                        totalCredits += parseInt(course.學分);
+                        totalCredits += parseInt(course.學分數);
                     });
                 }
                 document.getElementById('total-credits').textContent = totalCredits;
@@ -780,15 +780,15 @@ function fetchAndDisplaySelectedCourses() {
 
             const courseDiv = document.createElement("div");
             courseDiv.className = "nofixed-course";
-            courseDiv.dataset.courseName = name; // 儲存課程名稱
+            courseDiv.dataset.courseName = name; // 儲存科目名稱
             courseDiv.dataset.courseCode = code; // 儲存課程代碼
             courseDiv.innerHTML = `
-                <span>${name} (${credit} 學分)</span>
+                <span>${name} (${credit} 學分數)</span>
                 <button onclick="removeNoFixedCourse('${name}', '${code}')">移除</button>
             `;
             nofixedList.appendChild(courseDiv);
 
-            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存課程名稱、學分和代碼
+            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
             updateCreditDisplay();
             saveSelectedCourse(code, name); // 儲存到資料庫
         }
@@ -799,7 +799,7 @@ function fetchAndDisplaySelectedCourses() {
             // 檢查點擊的元素是否是帶有課程的格子
             if (!cell.classList.contains("highlight")) return;
 
-            const name = cell.dataset.courseName; // 從 dataset 取得課程名稱
+            const name = cell.dataset.courseName; // 從 dataset 取得科目名稱
             const code = cell.dataset.courseCode; // 從 dataset 取得課程代碼
             if (!name || !code) return;
 
@@ -826,7 +826,7 @@ function fetchAndDisplaySelectedCourses() {
         }
 
         // 移除無固定時段課程
-        function removeNoFixedCourse(name, code) { // 接收課程名稱和代碼
+        function removeNoFixedCourse(name, code) { // 接收科目名稱和代碼
             if (!confirm(`確定要從「無固定時段課程」中移除「${name}」？`)) return;
 
             // 找到對應的課程 div 並移除
@@ -843,11 +843,11 @@ function fetchAndDisplaySelectedCourses() {
             }
         }
 
-        // 顯示總學分
+        // 顯示總學分數
         function updateCreditDisplay() {
             // 遍歷 selectedCourses 物件的值 (每個值都是 { credit, code } 物件)
             const total = Object.values(selectedCourses).reduce((sum, courseInfo) => sum + courseInfo.credit, 0);
-            document.getElementById("credit-total").textContent = `已選學分：${total} 學分`;
+            document.getElementById("credit-total").textContent = `已選學分數：${total} 學分數`;
         }
 
         // 從資料庫載入已選課程
@@ -879,14 +879,14 @@ function fetchAndDisplaySelectedCourses() {
 
 
                     data.forEach((course) => {
-                        const name = course.課程名稱;
+                        const name = course.科目名稱;
                         const time = course.時間;
-                        const credit = course.學分;
+                        const credit = course.學分數;
                         const code = course.課程代碼; // 假設 fetch_timetable.php 也返回課程代碼
 
-                        if (!name || !code) return; // 課程名稱和代碼是必要的
+                        if (!name || !code) return; // 科目名稱和代碼是必要的
 
-                        // 如果課程名稱已存在，則不重複添加，這點在後端查詢時應該避免
+                        // 如果科目名稱已存在，則不重複添加，這點在後端查詢時應該避免
                         // 但前端再做一次檢查也無妨
                         if (selectedCourses.hasOwnProperty(name)) {
                             console.warn(`重複載入課程: ${name}, 代碼: ${code}`);
@@ -937,17 +937,17 @@ function fetchAndDisplaySelectedCourses() {
                             if (allCellsOccupied) {
                                 selectedCourses[name] = { credit: parseInt(credit), code: code };
                             } else {
-                                console.error(`課程「${name}」部分時段載入失敗，可能導致學分計算不準確或顯示不完整。`);
-                                // 即使有部分失敗，為了學分計算，先加入 selectedCourses
+                                console.error(`課程「${name}」部分時段載入失敗，可能導致學分數計算不準確或顯示不完整。`);
+                                // 即使有部分失敗，為了學分數計算，先加入 selectedCourses
                                 selectedCourses[name] = { credit: parseInt(credit), code: code };
                             }
                         } else {
                              console.warn(`課程「${name}」沒有時間資訊或格式異常，無法顯示。`);
-                             // 即使沒有時間，如果課程名存在，也加入 selectedCourses 以計入學分
+                             // 即使沒有時間，如果課程名存在，也加入 selectedCourses 以計入學分數
                              selectedCourses[name] = { credit: parseInt(credit), code: code };
                         }
                     });
-                    updateCreditDisplay(); // 載入所有課程後更新學分顯示
+                    updateCreditDisplay(); // 載入所有課程後更新學分數顯示
                 })
                 .catch((err) => {
                     console.error("❌ 載入課表發生錯誤：", err);
@@ -957,7 +957,7 @@ function fetchAndDisplaySelectedCourses() {
 
         // 加入與移除課程到資料庫
         // select_course.php 會接收 course_code 和 action (add/drop)
-        function saveSelectedCourse(course_code, course_name) { // 同時傳遞課程名稱用於日誌或提示
+        function saveSelectedCourse(course_code, course_name) { // 同時傳遞科目名稱用於日誌或提示
             fetch("select_course.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -30,9 +30,9 @@ $sql = "SELECT * FROM course_list WHERE 1=1"; // 基礎 SQL 語句，1=1 方便�
 $params = []; // 用於儲存 SQL 查詢的參數值
 $types = ""; // 用於儲存 bind_param 所需的參數類型字串
 
-// 關鍵字查詢：模糊匹配課程名稱、教師或課程代碼
+// 關鍵字查詢：模糊匹配科目名稱、教師或課程代碼
 if (!empty($keyword)) {
-    $sql .= " AND (課程名稱 LIKE CONCAT('%', ?, '%') OR 教師 LIKE CONCAT('%', ?, '%') OR 課程代碼 LIKE CONCAT('%', ?, '%'))";
+    $sql .= " AND (科目名稱 LIKE CONCAT('%', ?, '%') OR 教師 LIKE CONCAT('%', ?, '%') OR 課程代碼 LIKE CONCAT('%', ?, '%'))";
     $params[] = $keyword;
     $params[] = $keyword;
     $params[] = $keyword;

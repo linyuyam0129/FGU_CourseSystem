@@ -41,17 +41,17 @@ if (empty($course_code) || empty($action)) {
     exit();
 }
 
-// 根據 course_code 查出課程名稱 (如果需要，用於日誌或更詳細的訊息)
+// 根據 course_code 查出科目名稱 (如果需要，用於日誌或更詳細的訊息)
 // 這個查詢不是必需的，但有助於錯誤訊息和日誌記錄
 $course_name_from_db = '';
-$stmt_name = $conn->prepare("SELECT `課程名稱` FROM course_list WHERE `課程代碼` = ?");
+$stmt_name = $conn->prepare("SELECT `科目名稱` FROM course_list WHERE `課程代碼` = ?");
 if ($stmt_name) {
     $stmt_name->bind_param("s", $course_code);
     $stmt_name->execute();
     $result_name = $stmt_name->get_result();
     $row_name = $result_name->fetch_assoc();
     if ($row_name) {
-        $course_name_from_db = $row_name['課程名稱'];
+        $course_name_from_db = $row_name['科目名稱'];
     }
     $stmt_name->close();
 }

@@ -32,7 +32,7 @@ $full_course_code = strtoupper($course_type) . strtoupper($course_code_raw);
 
 // 步驟1: 檢查課程代碼是否存在於 course_list 資料表
 // 使用 CONVERT 和 COLLATE 處理可能存在的編碼問題
-$sql_check_course_list = "SELECT 課程名稱, 學分 FROM course_list WHERE CONVERT(`課程代碼` USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?";
+$sql_check_course_list = "SELECT 科目名稱, 學分數 FROM course_list WHERE CONVERT(`課程代碼` USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?";
 $stmt_check_course_list = $conn->prepare($sql_check_course_list);
 if ($stmt_check_course_list === false) {
     echo json_encode(['status' => 'error', 'message' => '預處理檢查課程列表查詢失敗: ' . $conn->error]);
@@ -80,15 +80,15 @@ if ($stmt_insert === false) {
     exit();
 }
 // 'issis' 代表參數類型：integer, string, string, integer, string
-$stmt_insert->bind_param("issis", $user_id, $full_course_code, $course_info['課程名稱'], $course_info['學分'], $semester);
+$stmt_insert->bind_param("issis", $user_id, $full_course_code, $course_info['科目名稱'], $course_info['學分數'], $semester);
 
 if ($stmt_insert->execute()) {
     echo json_encode([
         'status' => 'success',
         'message' => '課程新增成功！',
-        'course_name' => $course_info['課程名稱'],
+        'course_name' => $course_info['科目名稱'],
         'course_code' => $full_course_code,
-        'credits' => $course_info['學分'],
+        'credits' => $course_info['學分數'],
         'semester' => $semester
     ]);
 } else {

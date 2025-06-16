@@ -11,10 +11,10 @@ if (!isset($_SESSION['user_id'])) {
 
 $user_id = $_SESSION['user_id']; // 取得 session 中的使用者 ID
 
-// SQL 查詢：從 selected_courses 和 course_list 表格中獲取已選課程的名稱、時間、學分 和 課程代碼
+// SQL 查詢：從 selected_courses 和 course_list 表格中獲取已選課程的名稱、時間、學分數 和 課程代碼
 // 使用 COLLATE utf8mb4_unicode_ci 確保字元集比對一致性，避免潛在的匹配問題
 $sql = "
-SELECT cl.`課程名稱`, cl.`時間`, cl.`學分`, cl.`課程代碼`  -- <-- 在這裡加上了 `cl.\`課程代碼\``
+SELECT cl.`科目名稱`, cl.`時間`, cl.`學分數`, cl.`課程代碼`  -- <-- 在這裡加上了 `cl.\`課程代碼\``
 FROM selected_courses sc
 JOIN course_list cl
   ON sc.course_code COLLATE utf8mb4_unicode_ci = cl.`課程代碼` COLLATE utf8mb4_unicode_ci
