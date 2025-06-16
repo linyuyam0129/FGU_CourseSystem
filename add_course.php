@@ -1,15 +1,11 @@
 <?php
-// 第一行必須是 <?php，前面不能有任何空白字符或 BOM 頭
+
 session_start();
-require 'db.php'; // 假設 db.php 處理資料庫連線
+require 'db.php'; //db.php 處理資料庫連線
 
 // 設定回傳內容為 JSON 格式，必須在任何輸出之前
 header('Content-Type: application/json');
 
-// 啟用 PHP 錯誤報告，這在開發環境中很有用，但生產環境應禁用或記錄到檔案
-// ini_set('display_errors', 1);
-// ini_set('display_startup_errors', 1);
-// error_reporting(E_ALL);
 
 if (!isset($_SESSION['user_id'])) {
     echo json_encode(['status' => 'error', 'message' => '未登入，請先登入。']);
@@ -97,5 +93,4 @@ if ($stmt_insert->execute()) {
 
 $stmt_insert->close();
 $conn->close();
-// 文件結尾，確保沒有多餘的空白字符或換行符
 ?>

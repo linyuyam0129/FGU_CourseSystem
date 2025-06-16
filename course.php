@@ -7,7 +7,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        /* --- 整體佈局與基礎 --- */
+
         body {
             font-family: 'Noto Sans TC', 'Segoe UI', sans-serif; /* 使用思源黑體或Segoe UI，確保中文顯示 */
             background-color: #F8F9FA; /* 柔和的淺色背景 */
@@ -705,28 +705,119 @@ function fetchAndDisplaySelectedCourses() {
             });
         }
 
-        function deleteSelectedCourse(course_code) { // 傳遞課程代碼進行刪除
+        function addCourseToSelected(course_code, course_name, class_id) {
+            console.log(`DEBUG (前端JS): 嘗試加入課程: 課程代碼=${course_code}, 課程名稱=${course_name}, 班別=${class_id}`);
+
             fetch("select_course.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `course_code=${encodeURIComponent(course_code)}&action=drop`,
+                body: `course_code=${encodeURIComponent(course_code)}&class_id=${encodeURIComponent(class_id)}&action=add`,
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    console.log(`✅ 課程代碼 ${course_code} 已成功從資料庫移除。`);
-                    // *** <-- 在這裡新增這行 --> ***
-                    alert(`課程移除成功！`); // 新增：成功提示
-                    // *** <-- 在這裡新增這行 --> ***
-                    fetchAndDisplaySelectedCourses(); // 成功後重新整理已選課程列表
+            .then(response => {
+                // 檢查 HTTP 響應是否成功 (例如 200 OK)
+                if (!response.ok) {
+                    // 如果 HTTP 狀態碼不是 2xx，嘗試讀取錯誤訊息
+                    return response.text().then(text => {
+                        throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
+                    });
+                }
+                // 檢查響應的 Content-Type 是否為 application/json
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return response.json(); // 解析 JSON 響應
                 } else {
-                    console.error(`❌ 課程代碼 ${course_code} 從資料庫移除失敗:`, data.message);
-                    alert(`課程移除失敗: ${data.message}`);
+                    // 如果不是 JSON，但 HTTP 狀態碼是 OK，可能是 PHP 輸出錯誤或警告
+                    return response.text().then(text => {
+                        throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
+                    });
+                }
+            })
+            .then(data => {
+                // 根據後端回傳的狀態顯示訊息
+                if (data.status === 'success') {
+                    alert(data.message); // 顯示成功訊息給使用者
+                    console.log(`✅ 課程「${course_name}」(班別: ${class_id}) 加入成功。`);
+
+                    // --- 關鍵修正：更新學分數顯示 ---
+                    // 找到 ID 為 'credit-total' 的 HTML 元素
+                    const creditTotalDisplay = document.getElementById('credit-total'); 
+                    // 如果找到了該元素，並且後端返回了 total_credits
+                    if (creditTotalDisplay && data.total_credits !== undefined) {
+                        creditTotalDisplay.textContent = data.total_credits; // 更新其顯示的文字內容
+                    }
+
+                    location.reload(); 
+
+                } else {
+                    // 如果後端返回失敗狀態，顯示錯誤訊息
+                    alert(`課程「${course_name}」加入失敗: ${data.message}`);
+                    console.error(`課程「${course_name}」加入資料庫失敗:`, data.message);
                 }
             })
             .catch(error => {
-                console.error(`❌ 課程代碼 ${course_code} 移除時發生網路錯誤:`, error);
-                alert(`課程移除時發生錯誤，請檢查網路連線。`);
+                // 捕獲網路錯誤或 JSON 解析錯誤
+                console.error(`❌ 課程「${course_name}」(${course_code}, 班別:${class_id}) 加入時發生網路錯誤:`, error);
+                alert(`課程「${course_name}」加入時發生錯誤，請檢查網路連線或伺服器問題。`);
+            });
+        }
+
+        function deleteSelectedCourse(course_code, class_id) {
+            console.log(`DEBUG (前端JS): 嘗試移除課程: 課程代碼=${course_code}, 班別=${class_id} (類型: ${typeof class_id})`);
+
+            fetch("select_course.php", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `course_code=${encodeURIComponent(course_code)}&class_id=${encodeURIComponent(class_id)}&action=drop`,
+            })
+            .then(response => {
+                // 檢查 HTTP 響應是否成功 (例如 200 OK)
+                if (!response.ok) {
+                    // 如果 HTTP 狀態碼不是 2xx，嘗試讀取錯誤訊息
+                    return response.text().then(text => {
+                        throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
+                    });
+                }
+                // 檢查響應的 Content-Type 是否為 application/json
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return response.json(); // 解析 JSON 響應
+                } else {
+                    // 如果不是 JSON，但 HTTP 狀態碼是 OK，可能是 PHP 輸出錯誤或警告
+                    return response.text().then(text => {
+                        throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
+                    });
+                }
+            })
+            .then(data => {
+                // 根據後端回傳的狀態顯示訊息
+                if (data.status === 'success') {
+                    alert(data.message); // 顯示成功訊息給使用者
+                    console.log(`✅ 課程代碼 ${course_code} (班別: ${class_id}) 已成功從資料庫移除。`);
+
+                    // --- 關鍵修正：更新學分數顯示 ---
+                    // 找到 ID 為 'credit-total' 的 HTML 元素
+                    const creditTotalDisplay = document.getElementById('credit-total'); 
+                    // 如果找到了該元素，並且後端返回了 total_credits
+                    if (creditTotalDisplay && data.total_credits !== undefined) {
+                        creditTotalDisplay.textContent = data.total_credits; // 更新其顯示的文字內容
+                    }
+
+                    const courseRow = document.querySelector(`tr[data-course-code="${course_code}"][data-class-id="${class_id}"]`);
+                    if (courseRow) {
+                        courseRow.remove(); // 從 DOM 中移除該行
+                    }
+                    location.reload(); 
+
+                } else {
+                    // 如果後端返回失敗狀態，顯示錯誤訊息
+                    alert(`課程移除失敗: ${data.message}`);
+                    console.error(`課程移除失敗 (來自後端):`, data.message);
+                }
+            })
+            .catch(error => {
+                // 捕獲網路錯誤或 JSON 解析錯誤
+                console.error(`❌ 課程代碼 ${course_code} (班別: ${class_id}) 移除時發生網路錯誤或伺服器問題:`, error);
+                alert(`課程移除時發生錯誤或伺服器問題，請檢查網路連線或伺服器日誌。`);
             });
         }
 
@@ -742,7 +833,7 @@ function fetchAndDisplaySelectedCourses() {
                 return response.json();
             })
             .then(courses => {
-                const selectedCoursesList = document.getElementById('selected-courses-list');
+                const selectedCoursesList = document.getElementById('credit-total');
                 selectedCoursesList.innerHTML = ''; // 清空現有列表
                 let totalCredits = 0;
 
