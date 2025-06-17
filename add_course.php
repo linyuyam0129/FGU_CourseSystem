@@ -1,96 +1,98 @@
 <?php
-
 session_start();
-require 'db.php'; //db.php 處理資料庫連線
+require 'db.php'; // 確保 db.php 檔案存在且資料庫連線正確
 
-// 設定回傳內容為 JSON 格式，必須在任何輸出之前
-header('Content-Type: application/json');
+header('Content-Type: application/json'); // 設定回應的內容類型為 JSON
 
+$response = [
+    'status' => 'error',
+    'message' => '未知錯誤。'
+];
 
 if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['status' => 'error', 'message' => '未登入，請先登入。']);
+    $response['message'] = '使用者未登入。';
+    echo json_encode($response);
     exit();
 }
 
 $user_id = $_SESSION['user_id'];
 
-// 從 POST 請求獲取課程代碼和課程類型
-$course_code_raw = $_POST['course_code'] ?? ''; // 例如 '111'
-$course_type = $_POST['course_type'] ?? ''; // 例如 'GE'
-
-if (empty($course_code_raw)) {
-    echo json_encode(['status' => 'error', 'message' => '請輸入課程代碼。']);
+// 檢查 POST 請求中是否有 course_code 參數
+if (!isset($_POST['course_code']) || empty($_POST['course_code'])) {
+    $response['message'] = '課程代碼不能為空。';
+    echo json_encode($response);
     exit();
 }
 
-// 組合完整的課程代碼 (例如：GE111)。轉為大寫以確保與資料庫一致性。
-$full_course_code = strtoupper($course_type) . strtoupper($course_code_raw);
+$course_code = $_POST['course_code'];
+$semester = date("Y") . '學年度'; // 預設新增的課程學期為當前年度 (例如: 2024學年度)
 
-// 步驟1: 檢查課程代碼是否存在於 course_list 資料表
-// 使用 CONVERT 和 COLLATE 處理可能存在的編碼問題
-$sql_check_course_list = "SELECT 科目名稱, 學分數 FROM course_list WHERE CONVERT(`課程代碼` USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?";
-$stmt_check_course_list = $conn->prepare($sql_check_course_list);
-if ($stmt_check_course_list === false) {
-    echo json_encode(['status' => 'error', 'message' => '預處理檢查課程列表查詢失敗: ' . $conn->error]);
+// 驗證 course_code 是否存在於 `courses` 表中
+$sql_check_course = "SELECT course_code FROM courses WHERE course_code = ?";
+$stmt_check_course = $conn->prepare($sql_check_course);
+if (!$stmt_check_course) {
+    $response['message'] = '準備課程驗證查詢失敗: ' . $conn->error;
+    echo json_encode($response);
     exit();
 }
-$stmt_check_course_list->bind_param("s", $full_course_code);
-$stmt_check_course_list->execute();
-$result_check_course_list = $stmt_check_course_list->get_result();
+$stmt_check_course->bind_param("s", $course_code);
+$stmt_check_course->execute();
+$check_result = $stmt_check_course->get_result();
 
-if ($result_check_course_list->num_rows === 0) {
-    echo json_encode(['status' => 'error', 'message' => '查無此課程代碼，請確認輸入是否正確。']);
-    $stmt_check_course_list->close();
+if ($check_result->num_rows === 0) {
+    $response['message'] = "課程代碼 '{$course_code}' 不存在。請確認輸入無誤。";
+    echo json_encode($response);
+    $stmt_check_course->close();
     exit();
 }
-$course_info = $result_check_course_list->fetch_assoc(); // 獲取課程名稱和學分
-$stmt_check_course_list->close();
+$stmt_check_course->close();
 
-// 步驟2: 檢查該使用者是否已選修過該課程
-// 這裡應該檢查 `completed_courses` 而不是 `selected_courses`
-$sql_check_completed = "SELECT 1 FROM completed_courses WHERE user_id = ? AND CONVERT(`course_code` USING utf8mb4) COLLATE utf8mb4_unicode_ci = ?";
-$stmt_check_completed = $conn->prepare($sql_check_completed);
-if ($stmt_check_completed === false) {
-    echo json_encode(['status' => 'error', 'message' => '預處理檢查已修課程查詢失敗: ' . $conn->error]);
+// 檢查課程是否已經在 completed_courses 或 selected_courses 中
+$sql_check_status = "
+    SELECT course_code FROM completed_courses WHERE user_id = ? AND course_code = ?
+    UNION ALL
+    SELECT course_code FROM selected_courses WHERE user_id = ? AND course_code = ?
+";
+$stmt_check_status = $conn->prepare($sql_check_status);
+if (!$stmt_check_status) {
+    $response['message'] = '準備課程狀態檢查失敗: ' . $conn->error;
+    echo json_encode($response);
     exit();
 }
-$stmt_check_completed->bind_param("is", $user_id, $full_course_code);
-$stmt_check_completed->execute();
-$result_check_completed = $stmt_check_completed->get_result();
+$stmt_check_status->bind_param("isis", $user_id, $course_code, $user_id, $course_code);
+$stmt_check_status->execute();
+$status_result = $stmt_check_status->get_result();
 
-if ($result_check_completed->num_rows > 0) {
-    echo json_encode(['status' => 'error', 'message' => '您已選修過此課程，無需重複新增。']);
-    $stmt_check_completed->close();
+if ($status_result->num_rows > 0) {
+    $response['message'] = "課程 '{$course_code}' 已在您的已完成或已選列表中。";
+    $response['status'] = 'warning'; // 設為警告，表示非錯誤，只是不需重複新增
+    echo json_encode($response);
+    $stmt_check_status->close();
     exit();
 }
-$stmt_check_completed->close();
+$stmt_check_status->close();
 
-// 步驟3: 將課程新增到 completed_courses 資料表
-// 請確保您的 completed_courses 表有 course_name 和 credits 欄位
-$semester = '113-2'; // 假設預設為目前學期 (請根據實際學期調整)
 
-$sql_insert = "INSERT INTO completed_courses (user_id, course_code, course_name, credits, semester) VALUES (?, ?, ?, ?, ?)";
-$stmt_insert = $conn->prepare($sql_insert);
-if ($stmt_insert === false) {
-    echo json_encode(['status' => 'error', 'message' => '預處理插入課程查詢失敗: ' . $conn->error]);
+// 將課程新增到 selected_courses 表中
+// 這裡預設新增到 selected_courses，表示已選但尚未確定完成
+$sql_insert_course = "INSERT INTO completed_courses (user_id, course_code, semester) VALUES (?, ?, ?)";
+$stmt_insert_course = $conn->prepare($sql_insert_course);
+if (!$stmt_insert_course) {
+    $response['message'] = '準備新增課程查詢失敗: ' . $conn->error;
+    echo json_encode($response);
     exit();
 }
-// 'issis' 代表參數類型：integer, string, string, integer, string
-$stmt_insert->bind_param("issis", $user_id, $full_course_code, $course_info['科目名稱'], $course_info['學分數'], $semester);
+$stmt_insert_course->bind_param("iss", $user_id, $course_code, $semester);
 
-if ($stmt_insert->execute()) {
-    echo json_encode([
-        'status' => 'success',
-        'message' => '課程新增成功！',
-        'course_name' => $course_info['科目名稱'],
-        'course_code' => $full_course_code,
-        'credits' => $course_info['學分數'],
-        'semester' => $semester
-    ]);
+if ($stmt_insert_course->execute()) {
+    $response['status'] = 'success';
+    $response['message'] = "課程 '{$course_code}' 成功加入已選列表！";
 } else {
-    echo json_encode(['status' => 'error', 'message' => '新增課程失敗: ' . $stmt_insert->error]);
+    $response['message'] = '新增課程失敗: ' . $stmt_insert_course->error;
 }
 
-$stmt_insert->close();
+$stmt_insert_course->close();
 $conn->close();
+
+echo json_encode($response);
 ?>
