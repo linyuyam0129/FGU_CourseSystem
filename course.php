@@ -1,3 +1,44 @@
+<?php
+session_start();
+require 'db.php'; // 確保 db.php 檔案存在且資料庫連線正確
+
+// 檢查使用者是否已登入，若否則導向登入頁面
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// 從 Session 中獲取使用者資訊
+// 使用 null coalescing operator (??) 確保即使 Session 變數未設定也不會報錯
+$user_name = $_SESSION['name'] ?? '未知使用者';
+$student_id = $_SESSION['student_id'] ?? '未知學號';
+$user_department = $_SESSION['department'] ?? '';
+$user_group = $_SESSION['user_group'] ?? ''; // 確保有組別資訊，如 '遊戲組' 或 '流音組'
+
+// 從 'course_list' 表中獲取所有課程詳細資訊，用於前端顯示和驗證
+$all_courses = [];
+$sql_all_courses = "SELECT `課程代碼`, `科目名稱`, `學分數` AS credits, `時間`, `教室`, `教師` FROM `course_list`";
+$stmt_all_courses = $conn->prepare($sql_all_courses);
+if ($stmt_all_courses) {
+    $stmt_all_courses->execute();
+    $result_all_courses = $stmt_all_courses->get_result();
+    while ($row = $result_all_courses->fetch_assoc()) {
+        // 使用 '課程代碼' 作為 JavaScript 中 allCoursesData 的鍵
+        $all_courses[$row['課程代碼']] = $row;
+    }
+    $stmt_all_courses->close();
+} else {
+    error_log("準備所有課程查詢失敗: " . $conn->error);
+}
+
+// 獲取使用者已選課程 (此處僅為初始化 PHP 變數，實際列表由 JS 載入)
+$selected_courses_details = [];
+// 這裡不需要再次查詢 selected_courses_details，因為頁面載入後會由 JS 的 loadSelectedCoursesFromDatabase() 填充
+// 但為了 PHP 程式碼的完整性，保留此變數定義。
+
+?>
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -299,15 +340,58 @@
                 margin-left: 0;
             }
         }
+
+        /* New styles for notification */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #4CAF50; /* Green for success */
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            opacity: 0;
+            transform: translateY(-20px);
+            animation: slideIn 0.5s forwards, fadeOut 0.5s 2.5s forwards;
+            font-weight: 600;
+        }
+        .notification.error {
+            background-color: #F44336; /* Red for error */
+        }
+
+        @keyframes slideIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .notification {
+                width: calc(100% - 40px);
+                left: 20px;
+                right: 20px;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="header">
         輔助選課系統
         <div class="header-buttons">
-            <button onclick="location.href='login.php'"><i class="fas fa-sign-out-alt"></i> 登出</button>
             <button onclick="location.href='index.php'"><i class="fas fa-chalkboard"></i> 畢業門檻狀態</button>
             <button onclick="location.href='Downloads.html'"><i class="fas fa-download"></i> 下載手冊</button>
+            <button onclick="location.href='login.php'"><i class="fas fa-sign-out-alt"></i> 登出</button>
         </div>
     </div>
 
@@ -374,18 +458,18 @@
                     <option value="MA">管理學院 MA</option>
                     <option value="MD">管理系 MD</option>
                     <option value="SH">運健系 SH</option>
-                    <option value="AE">經濟系 AE</option>
+                    <option value="AE">應用經濟學系</option>
                 </optgroup>
                 <optgroup label="社會科學學院">
                     <option value="SO">社會科學學院 SO</option>
                     <option value="SC">心理系 SC</option>
-                    <option value="PA">公事系 PA</option>
+                    <option value="PA">公共事務學系</option>
                     <option value="SY">社會系 SY</option>
                 </optgroup>
                 <optgroup label="人文學院">
                     <option value="HC">人文學院 HC</option>
                     <option value="LC">外文系 LC</option>
-                    <option value="LE">中文系 LE</option>
+                    <option value="LE">中國文學系</option>
                     <option value="HI">歷史系 HI</option>
                 </optgroup>
 </select>
@@ -420,57 +504,48 @@
         const days = ["一", "二", "三", "四", "五"];
         const tbody = document.getElementById("timetable-body");
         const nofixedList = document.getElementById("nofixed-list");
-        let selectedCourses = {}; // 儲存已選課程的「科目名稱: 學分數」對
+        let selectedCoursesOnTimetable = {}; // 儲存已選課程的「科目名稱: { credit, code }」對，僅限於課表顯示使用
 
-        // 新增此函數
-function fetchAndDisplaySelectedCourses() {
-    fetch('fetch_timetable.php')
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(errorData => {
-                    throw new Error(errorData.error || `HTTP 錯誤！狀態碼: ${response.status}`);
-                });
-            }
-            return response.json();
-        })
-        .then(courses => {
-            const selectedCoursesList = document.getElementById('selected-courses-list');
-            selectedCoursesList.innerHTML = ''; // 清空現有列表
-            let totalCredits = 0;
+        // 顯示通知訊息
+        function showNotification(message, type = 'success') {
+            const container = document.getElementById('notification-container');
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            container.appendChild(notification);
 
-            if (courses.length === 0) {
-                selectedCoursesList.innerHTML = '<li class="no-courses">尚未選取任何課程。</li>';
-            } else {
-                courses.forEach(course => {
-                    const li = document.createElement('li');
-                    // 這裡需要確保 fetch_timetable.php 返回 '課程代碼'
-                    li.innerHTML = `
-                        <span>${course.科目名稱} - <span class="math-inline">\{course\.時間\} \(</span>{course.學分數}學分數)</span>
-                        <button class="drop-button" data-course-code="${course.課程代碼}">刪除</button>
-                    `;
-                    selectedCoursesList.appendChild(li);
-                    totalCredits += parseInt(course.學分數);
-                });
-            }
-            document.getElementById('total-credits').textContent = totalCredits;
-        })
-        .catch(error => {
-            console.error('❌ 載入已選課程時發生錯誤:', error);
-            document.getElementById('selected-courses-list').innerHTML = `<li class="error-message">載入已選課程失敗: ${error.message}. 請稍後再試。</li>`;
-        });
-}
+            // 移除 notification after 3 seconds
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateY(-20px)';
+                notification.addEventListener('transitionend', () => notification.remove());
+            }, 3000);
+        }
+
+        // HTML 實體化函數，防止 XSS 攻擊
+        function htmlspecialchars(str) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
+        }
 
         // 建立課表表格
-        timeSlots.forEach((t, i) => {
-            const row = document.createElement("tr");
-            row.innerHTML = `<td>第${i + 1}節<br>${t}</td>`;
-            days.forEach((day) => {
-                // 為每個課表單元格添加 drop 和 dragover 事件監聽器
-                row.innerHTML += `<td id="cell-${day}-${i + 1}" ondrop="drop(event)" ondragover="allowDrop(event)"></td>`;
+        function initializeTimetableGrid() {
+            tbody.innerHTML = ''; // 清空現有課表
+            timeSlots.forEach((t, i) => {
+                const row = document.createElement("tr");
+                row.innerHTML = `<td>第${i + 1}節<br>${t}</td>`;
+                days.forEach((day) => {
+                    const cell = document.createElement("td");
+                    cell.id = `cell-${day}-${i + 1}`;
+                    cell.ondrop = drop;
+                    cell.ondragover = allowDrop;
+                    row.appendChild(cell);
+                });
+                tbody.appendChild(row);
             });
-            tbody.appendChild(row);
-        });
-
+        }
+        
         // 綁定搜尋欄位事件 (input 實時搜尋, change 當選單改變時搜尋)
         ["search-input", "filter-type", "filter-day", "filter-dept", "filter-general"].forEach((id) => {
             const element = document.getElementById(id);
@@ -555,8 +630,6 @@ function fetchAndDisplaySelectedCourses() {
         // 拖拉功能：允許放置
         function allowDrop(ev) {
             ev.preventDefault(); // 阻止默認行為，允許放置
-            // 可選：當拖曳物體進入可放置區域時，添加視覺回饋
-            // ev.target.style.backgroundColor = '#e6ffe6';
         }
 
         // 拖拉功能：拖曳開始
@@ -577,7 +650,7 @@ function fetchAndDisplaySelectedCourses() {
             ev.target.classList.add('dragging'); // 添加拖曳中的樣式
         }
 
-        // 拖曳結束時移除樣式 (可以在任何地方，但通常放在 drop 或 dragend 事件中)
+        // 拖曳結束時移除樣式
         document.addEventListener('dragend', (ev) => {
             ev.target.classList.remove('dragging');
         });
@@ -586,9 +659,6 @@ function fetchAndDisplaySelectedCourses() {
         // 放入課表
         function drop(ev) {
             ev.preventDefault(); // 阻止默認行為
-
-            // 可選：當拖曳物體離開可放置區域或放置後，移除視覺回饋
-            // ev.target.style.backgroundColor = '';
 
             const courseData = JSON.parse(ev.dataTransfer.getData("text/plain"));
             const { name, time, credit, code } = courseData; // 取得課程代碼
@@ -599,15 +669,15 @@ function fetchAndDisplaySelectedCourses() {
                 return;
             }
 
-            // 檢查課程是否已經選過
-            if (selectedCourses.hasOwnProperty(name)) {
-                alert(`課程「${name}」已在您的課表中或無固定時段清單中。`);
+            // 檢查課程是否已經選過（在前端 selectedCoursesOnTimetable 中）
+            if (selectedCoursesOnTimetable.hasOwnProperty(name)) {
+                showNotification(`課程「${name}」已在您的課表中或無固定時段清單中。`, 'warning');
                 return;
             }
 
             // 處理「無固定時段授課」的課程
             if (time && time.includes("無固定時段")) {
-                addNoFixedCourse(courseData); // 將整個 courseData 傳入
+                addNoFixedCourseAndSaveToDatabase(courseData); // 將整個 courseData 傳入，並觸發儲存
                 return;
             }
 
@@ -636,7 +706,7 @@ function fetchAndDisplaySelectedCourses() {
             });
 
             if (hasConflict) {
-                alert("課程衝堂，請選擇其他課程！\n\n已衝堂：\n" + conflictDetails.join("\n"));
+                showNotification("課程衝堂，請選擇其他課程！\n\n已衝堂：\n" + conflictDetails.join("\n"), 'error');
                 // 視覺上標示衝堂的格子
                 slots.forEach((slot) => {
                     const match = slot.match(/星期([一二三四五])\s*([\d,]+)/);
@@ -675,200 +745,22 @@ function fetchAndDisplaySelectedCourses() {
             });
 
             // 只有第一次加入該課程時才更新學分數並存入資料庫
-            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
+            selectedCoursesOnTimetable[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
             updateCreditDisplay();
-            saveSelectedCourse(code, name); // 儲存到資料庫，傳遞課程代碼和名稱
+            saveCourseToDatabase(code, name); // 儲存到資料庫，傳遞課程代碼和名稱
         }
 
-        function addSelectedCourse(course_code, course_name) {
-            fetch("select_course.php", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `course_code=${encodeURIComponent(course_code)}&action=add`,
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    console.log(`✅ 課程「${course_name}」已成功加入。`);
-                    alert(`課程「${course_name}」加入成功！`);
-                    // *** <-- 在這裡新增這行 --> ***
-                    fetchAndDisplaySelectedCourses(); // 成功後重新整理已選課程列表
-                } else {
-                    console.error(`❌ 課程「${course_name}」加入失敗: ${data.message}`);
-                    alert(`課程「${course_name}」加入失敗: ${data.message}`);
-                    // 如果資料庫操作失敗，考慮是否需要從前端 UI 回滾該課程
-                }
-            })
-            .catch(error => {
-                console.error(`❌ 課程「${course_name}」(${course_code}) 加入時發生網路錯誤:`, error);
-                alert(`課程「${course_name}」加入時發生錯誤，請檢查網路連線。`);
-            });
-        }
-
-        function addCourseToSelected(course_code, course_name, class_id) {
-            console.log(`DEBUG (前端JS): 嘗試加入課程: 課程代碼=${course_code}, 課程名稱=${course_name}, 班別=${class_id}`);
-
-            fetch("select_course.php", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `course_code=${encodeURIComponent(course_code)}&class_id=${encodeURIComponent(class_id)}&action=add`,
-            })
-            .then(response => {
-                // 檢查 HTTP 響應是否成功 (例如 200 OK)
-                if (!response.ok) {
-                    // 如果 HTTP 狀態碼不是 2xx，嘗試讀取錯誤訊息
-                    return response.text().then(text => {
-                        throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
-                    });
-                }
-                // 檢查響應的 Content-Type 是否為 application/json
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    return response.json(); // 解析 JSON 響應
-                } else {
-                    // 如果不是 JSON，但 HTTP 狀態碼是 OK，可能是 PHP 輸出錯誤或警告
-                    return response.text().then(text => {
-                        throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
-                    });
-                }
-            })
-            .then(data => {
-                // 根據後端回傳的狀態顯示訊息
-                if (data.status === 'success') {
-                    alert(data.message); // 顯示成功訊息給使用者
-                    console.log(`✅ 課程「${course_name}」(班別: ${class_id}) 加入成功。`);
-
-                    // --- 關鍵修正：更新學分數顯示 ---
-                    // 找到 ID 為 'credit-total' 的 HTML 元素
-                    const creditTotalDisplay = document.getElementById('credit-total'); 
-                    // 如果找到了該元素，並且後端返回了 total_credits
-                    if (creditTotalDisplay && data.total_credits !== undefined) {
-                        creditTotalDisplay.textContent = data.total_credits; // 更新其顯示的文字內容
-                    }
-
-                    location.reload(); 
-
-                } else {
-                    // 如果後端返回失敗狀態，顯示錯誤訊息
-                    alert(`課程「${course_name}」加入失敗: ${data.message}`);
-                    console.error(`課程「${course_name}」加入資料庫失敗:`, data.message);
-                }
-            })
-            .catch(error => {
-                // 捕獲網路錯誤或 JSON 解析錯誤
-                console.error(`❌ 課程「${course_name}」(${course_code}, 班別:${class_id}) 加入時發生網路錯誤:`, error);
-                alert(`課程「${course_name}」加入時發生錯誤，請檢查網路連線或伺服器問題。`);
-            });
-        }
-
-        function deleteSelectedCourse(course_code, class_id) {
-            console.log(`DEBUG (前端JS): 嘗試移除課程: 課程代碼=${course_code}, 班別=${class_id} (類型: ${typeof class_id})`);
-
-            fetch("select_course.php", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `course_code=${encodeURIComponent(course_code)}&class_id=${encodeURIComponent(class_id)}&action=drop`,
-            })
-            .then(response => {
-                // 檢查 HTTP 響應是否成功 (例如 200 OK)
-                if (!response.ok) {
-                    // 如果 HTTP 狀態碼不是 2xx，嘗試讀取錯誤訊息
-                    return response.text().then(text => {
-                        throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
-                    });
-                }
-                // 檢查響應的 Content-Type 是否為 application/json
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    return response.json(); // 解析 JSON 響應
-                } else {
-                    // 如果不是 JSON，但 HTTP 狀態碼是 OK，可能是 PHP 輸出錯誤或警告
-                    return response.text().then(text => {
-                        throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
-                    });
-                }
-            })
-            .then(data => {
-                // 根據後端回傳的狀態顯示訊息
-                if (data.status === 'success') {
-                    alert(data.message); // 顯示成功訊息給使用者
-                    console.log(`✅ 課程代碼 ${course_code} (班別: ${class_id}) 已成功從資料庫移除。`);
-
-                    // --- 關鍵修正：更新學分數顯示 ---
-                    // 找到 ID 為 'credit-total' 的 HTML 元素
-                    const creditTotalDisplay = document.getElementById('credit-total'); 
-                    // 如果找到了該元素，並且後端返回了 total_credits
-                    if (creditTotalDisplay && data.total_credits !== undefined) {
-                        creditTotalDisplay.textContent = data.total_credits; // 更新其顯示的文字內容
-                    }
-
-                    const courseRow = document.querySelector(`tr[data-course-code="${course_code}"][data-class-id="${class_id}"]`);
-                    if (courseRow) {
-                        courseRow.remove(); // 從 DOM 中移除該行
-                    }
-                    location.reload(); 
-
-                } else {
-                    // 如果後端返回失敗狀態，顯示錯誤訊息
-                    alert(`課程移除失敗: ${data.message}`);
-                    console.error(`課程移除失敗 (來自後端):`, data.message);
-                }
-            })
-            .catch(error => {
-                // 捕獲網路錯誤或 JSON 解析錯誤
-                console.error(`❌ 課程代碼 ${course_code} (班別: ${class_id}) 移除時發生網路錯誤或伺服器問題:`, error);
-                alert(`課程移除時發生錯誤或伺服器問題，請檢查網路連線或伺服器日誌。`);
-            });
-        }
-
-        // *** <-- 在這裡新增以下整個函數 --> ***
-    function fetchAndDisplaySelectedCourses() {
-        fetch('fetch_timetable.php')
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().then(errorData => {
-                        throw new Error(errorData.error || `HTTP 錯誤！狀態碼: ${response.status}`);
-                    });
-                }
-                return response.json();
-            })
-            .then(courses => {
-                const selectedCoursesList = document.getElementById('credit-total');
-                selectedCoursesList.innerHTML = ''; // 清空現有列表
-                let totalCredits = 0;
-
-                if (courses.length === 0) {
-                    selectedCoursesList.innerHTML = '<li class="no-courses">尚未選取任何課程。</li>';
-                } else {
-                    courses.forEach(course => {
-                        const li = document.createElement('li');
-                        // 這裡需要確保 fetch_timetable.php 返回 '課程代碼'
-                        li.innerHTML = `
-                            <span>${course.科目名稱} - ${course.時間} (${course.學分數}學分數)</span>
-                            <button class="drop-button" data-course-code="${course.課程代碼}">刪除</button>
-                        `;
-                        selectedCoursesList.appendChild(li);
-                        totalCredits += parseInt(course.學分數);
-                    });
-                }
-                document.getElementById('total-credits').textContent = totalCredits;
-            })
-            .catch(error => {
-                console.error('❌ 載入已選課程時發生錯誤:', error);
-                document.getElementById('selected-courses-list').innerHTML = `<li class="error-message">載入已選課程失敗: ${error.message}. 請稍後再試。</li>`;
-            });
-    }
-    
-        // 將無固定時段課程加入面板
-        function addNoFixedCourse(course) {
+        // 將無固定時段課程加入面板，並觸發資料庫儲存 (這是使用者拖曳時調用)
+        function addNoFixedCourseAndSaveToDatabase(course) {
             const { name, credit, code } = course; // 取得課程代碼
 
             // 如果已經在清單中，提示使用者
-            if (selectedCourses.hasOwnProperty(name)) {
-                alert(`課程「${name}」已在「無固定時段課程」清單中。`);
+            if (selectedCoursesOnTimetable.hasOwnProperty(name)) {
+                showNotification(`課程「${name}」已在「無固定時段課程」清單中。`, 'warning');
                 return;
             }
 
+            // 先在前端顯示
             const courseDiv = document.createElement("div");
             courseDiv.className = "nofixed-course";
             courseDiv.dataset.courseName = name; // 儲存科目名稱
@@ -879,9 +771,11 @@ function fetchAndDisplaySelectedCourses() {
             `;
             nofixedList.appendChild(courseDiv);
 
-            selectedCourses[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
+            selectedCoursesOnTimetable[name] = { credit: parseInt(credit), code: code }; // 儲存科目名稱、學分數和代碼
             updateCreditDisplay();
-            saveSelectedCourse(code, name); // 儲存到資料庫
+            
+            // 觸發資料庫儲存
+            saveCourseToDatabase(code, name);
         }
 
         // 移除固定時段課程
@@ -897,7 +791,7 @@ function fetchAndDisplaySelectedCourses() {
             if (!confirm(`確定要從課表移除「${name}」？`)) return;
 
             // 找到所有顯示該課程的格子並清空
-            const cells = document.querySelectorAll(".timetable td[data-course-name]");
+            const cells = document.querySelectorAll(".timetable td[data-course-code]");
             cells.forEach((c) => {
                 if (c.dataset.courseCode === code) { // 使用課程代碼來精確匹配
                     c.textContent = "";
@@ -908,11 +802,11 @@ function fetchAndDisplaySelectedCourses() {
                 }
             });
 
-            // 從 selectedCourses 和資料庫中移除
-            if (selectedCourses.hasOwnProperty(name)) {
-                delete selectedCourses[name];
+            // 從 selectedCoursesOnTimetable 和資料庫中移除
+            if (selectedCoursesOnTimetable.hasOwnProperty(name)) {
+                delete selectedCoursesOnTimetable[name];
                 updateCreditDisplay();
-                deleteSelectedCourse(code); // 從資料庫刪除，傳遞課程代碼
+                deleteCourseFromDatabase(code); // 從資料庫刪除，傳遞課程代碼
             }
         }
 
@@ -926,151 +820,160 @@ function fetchAndDisplaySelectedCourses() {
                 nofixedList.removeChild(courseDiv);
             }
 
-            // 從 selectedCourses 和資料庫中移除
-            if (selectedCourses.hasOwnProperty(name)) {
-                delete selectedCourses[name];
+            // 從 selectedCoursesOnTimetable 和資料庫中移除
+            if (selectedCoursesOnTimetable.hasOwnProperty(name)) {
+                delete selectedCoursesOnTimetable[name];
                 updateCreditDisplay();
-                deleteSelectedCourse(code); // 從資料庫刪除，傳遞課程代碼
+                deleteCourseFromDatabase(code); // 從資料庫刪除，傳遞課程代碼
             }
         }
 
         // 顯示總學分數
         function updateCreditDisplay() {
-            // 遍歷 selectedCourses 物件的值 (每個值都是 { credit, code } 物件)
-            const total = Object.values(selectedCourses).reduce((sum, courseInfo) => sum + courseInfo.credit, 0);
+            // 遍歷 selectedCoursesOnTimetable 物件的值 (每個值都是 { credit, code } 物件)
+            const total = Object.values(selectedCoursesOnTimetable).reduce((sum, courseInfo) => sum + courseInfo.credit, 0);
             document.getElementById("credit-total").textContent = `已選學分數：${total} 學分數`;
         }
 
-        // 從資料庫載入已選課程
-        function loadSelectedCourses() {
-            fetch("fetch_timetable.php")
+        // 從資料庫載入已選課程 (此函數已修正，不再觸發 saveSelectedCourse)
+        function loadSelectedCoursesFromDatabase() {
+            fetch("select_course.php?action=get_selected")
                 .then((res) => {
                     if (!res.ok) {
-                        // 處理 HTTP 錯誤
                         return res.text().then(text => { throw new Error(`載入課表 HTTP error! status: ${res.status}, body: ${text}`); });
                     }
                     return res.json();
                 })
                 .then((data) => {
-                    console.log("✅ 已選課程資料：", data);
-                    // 清空之前的選課狀態，以確保從資料庫載入的資料是唯一的
-                    selectedCourses = {};
-                    tbody.innerHTML = ''; // 清空課表內容
+                    console.log("✅ 已選課程資料（從資料庫載入）：", data);
+                    // 清空之前的選課狀態和課表顯示
+                    selectedCoursesOnTimetable = {};
+                    initializeTimetableGrid(); // 重新初始化課表網格
                     nofixedList.innerHTML = ''; // 清空無固定時段列表
 
-                    // 重新建立空的課表結構
-                    timeSlots.forEach((t, i) => {
-                        const row = document.createElement("tr");
-                        row.innerHTML = `<td>第${i + 1}節<br>${t}</td>`;
-                        days.forEach((day) => {
-                            row.innerHTML += `<td id="cell-${day}-${i + 1}" ondrop="drop(event)" ondragover="allowDrop(event)"></td>`;
-                        });
-                        tbody.appendChild(row);
-                    });
+                    if (data.status === 'success' && data.courses) {
+                        data.courses.forEach((course) => {
+                            const name = course.科目名稱;
+                            const time = course.時間;
+                            const credit = course.學分數;
+                            const code = course.course_code; // 注意這裡使用 course_code
 
-
-                    data.forEach((course) => {
-                        const name = course.科目名稱;
-                        const time = course.時間;
-                        const credit = course.學分數;
-                        const code = course.課程代碼; // 假設 fetch_timetable.php 也返回課程代碼
-
-                        if (!name || !code) return; // 科目名稱和代碼是必要的
-
-                        // 如果科目名稱已存在，則不重複添加，這點在後端查詢時應該避免
-                        // 但前端再做一次檢查也無妨
-                        if (selectedCourses.hasOwnProperty(name)) {
-                            console.warn(`重複載入課程: ${name}, 代碼: ${code}`);
-                            return;
-                        }
-
-                        // 處理無固定時段課程
-                        if (time && time.includes("無固定時段")) {
-                            // 直接呼叫 addNoFixedCourse，它會處理添加到列表和 selectedCourses
-                            addNoFixedCourse({ name, time, credit, code });
-                        } else if (time) { // 處理固定時段課程
-                            const slots = time.split("、");
-                            let allCellsOccupied = true; // 假設所有時段都能被佔用
-
-                            slots.forEach((slot) => {
-                                const match = slot.match(/星期([一二三四五])\s*([\d,]+)/);
-                                if (!match) {
-                                    console.warn(`載入課程「${name}」時遇到無效時間格式: ${slot}`);
-                                    allCellsOccupied = false; // 有無效格式，則可能無法完全佔用
-                                    return;
-                                }
-
-                                const day = match[1];
-                                const periods = match[2].split(",").map(Number);
-
-                                periods.forEach((p) => {
-                                    const cell = document.getElementById(`cell-${day}-${p}`);
-                                    if (cell) {
-                                        // 檢查是否衝堂（從資料庫載入時，不應發生衝堂，但仍可警示）
-                                        if (cell.textContent.trim() !== "" && cell.dataset.courseCode !== code) {
-                                            console.warn(`載入課程「${name}」時發現衝堂於 星期${day} 第${p}節，已佔用: ${cell.textContent}`);
-                                            cell.classList.add("conflict"); // 標示為衝突
-                                            // 可以選擇不載入此課程，或覆蓋，或通知用戶
-                                            // 這裡暫時仍載入，但保持衝突標記
-                                        }
-                                        cell.textContent = name;
-                                        cell.classList.add("highlight");
-                                        cell.dataset.courseName = name;
-                                        cell.dataset.courseCode = code; // 儲存課程代碼
-                                        cell.onclick = removeCourse; // 綁定點擊事件來移除課程
-                                    } else {
-                                        console.warn(`載入課程「${name}」時，找不到單元格: cell-${day}-${p}`);
-                                        allCellsOccupied = false;
-                                    }
-                                });
-                            });
-                            // 如果所有時段都成功載入，才加入 selectedCourses
-                            if (allCellsOccupied) {
-                                selectedCourses[name] = { credit: parseInt(credit), code: code };
-                            } else {
-                                console.error(`課程「${name}」部分時段載入失敗，可能導致學分數計算不準確或顯示不完整。`);
-                                // 即使有部分失敗，為了學分數計算，先加入 selectedCourses
-                                selectedCourses[name] = { credit: parseInt(credit), code: code };
+                            if (!name || !code) {
+                                console.warn(`載入課程時資料不完整: ${JSON.stringify(course)}`);
+                                return;
                             }
-                        } else {
-                             console.warn(`課程「${name}」沒有時間資訊或格式異常，無法顯示。`);
-                             // 即使沒有時間，如果課程名存在，也加入 selectedCourses 以計入學分數
-                             selectedCourses[name] = { credit: parseInt(credit), code: code };
-                        }
-                    });
+
+                            // 直接將課程添加到前端顯示，不觸發資料庫寫入
+                            if (time && time.includes("無固定時段")) {
+                                const courseDiv = document.createElement("div");
+                                courseDiv.className = "nofixed-course";
+                                courseDiv.dataset.courseName = name;
+                                courseDiv.dataset.courseCode = code;
+                                courseDiv.innerHTML = `
+                                    <span>${name} (${credit} 學分數)</span>
+                                    <button onclick="removeNoFixedCourse('${name}', '${code}')">移除</button>
+                                `;
+                                nofixedList.appendChild(courseDiv);
+                            } else if (time) { // 處理固定時段課程
+                                const slots = time.split("、");
+                                // 這裡無需再檢查衝堂並彈出 alert，因為這些是已選課程
+                                slots.forEach((slot) => {
+                                    const match = slot.match(/星期([一二三四五])\s*([\d,]+)/);
+                                    if (!match) {
+                                        console.warn(`載入課程「${name}」時遇到無效時間格式: ${slot}`);
+                                        return;
+                                    }
+
+                                    const day = match[1];
+                                    const periods = match[2].split(",").map(Number);
+
+                                    periods.forEach((p) => {
+                                        const cell = document.getElementById(`cell-${day}-${p}`);
+                                        if (cell) {
+                                            // 載入時也檢查是否有衝突，但不阻止載入
+                                            if (cell.textContent.trim() !== "" && cell.dataset.courseCode !== code) {
+                                                console.warn(`載入課程「${name}」時發現衝堂於 星期${day} 第${p}節，已佔用: ${cell.textContent} (代碼: ${cell.dataset.courseCode})`);
+                                                cell.classList.add("conflict"); // 標示為衝突
+                                            }
+                                            cell.textContent = name;
+                                            cell.classList.add("highlight");
+                                            cell.dataset.courseName = name;
+                                            cell.dataset.courseCode = code;
+                                            cell.onclick = removeCourse; // 綁定點擊事件來移除課程
+                                        } else {
+                                            console.warn(`載入課程「${name}」時，找不到單元格: cell-${day}-${p}`);
+                                        }
+                                    });
+                                });
+                            } else {
+                                console.warn(`課程「${name}」沒有時間資訊或格式異常，無法顯示在課表。`);
+                            }
+                            // 無論是否顯示在課表上，都將課程添加到 selectedCoursesOnTimetable 用於學分計算
+                            selectedCoursesOnTimetable[name] = { credit: parseInt(credit), code: code };
+                        });
+                    } else {
+                         // 如果 data.status 不是 success 或者 courses 為空，顯示沒有已選課程
+                         console.warn("未找到已選課程或載入失敗:", data.message);
+                         // 清空顯示內容以反映沒有課程
+                         nofixedList.innerHTML = '';
+                    }
                     updateCreditDisplay(); // 載入所有課程後更新學分數顯示
+                    updateSelectedCoursesDisplay(); // 更新已選課程列表（右側列表）
+                    updateCourseStatus(); // 確保搜尋結果列表的按鈕狀態也更新
                 })
                 .catch((err) => {
-                    console.error("❌ 載入課表發生錯誤：", err);
-                    alert("無法載入已選課表，請稍後再試。錯誤訊息：\n" + err.message);
+                    console.error("❌ 載入已選課表發生錯誤：", err);
+                    showNotification("無法載入已選課表，請稍後再試。錯誤訊息：\n" + err.message, 'error');
                 });
         }
 
-        // 加入與移除課程到資料庫
-        // select_course.php 會接收 course_code 和 action (add/drop)
-        function saveSelectedCourse(course_code, course_name) { // 同時傳遞科目名稱用於日誌或提示
+        // 將課程加入資料庫 (從拖曳或「加入」按鈕觸發)
+        function saveCourseToDatabase(course_code, course_name) {
             fetch("select_course.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `course_code=${encodeURIComponent(course_code)}&action=add`,
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
+                    });
+                }
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return response.json();
+                } else {
+                    return response.text().then(text => {
+                        throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
+                    });
+                }
+            })
             .then(data => {
                 if (data.status === 'success') {
+                    showNotification(data.message);
                     console.log(`✅ 課程「${course_name}」(${course_code}) 已成功加入資料庫。`);
-                } else {
-                    console.error(`❌ 課程「${course_name}」(${course_code}) 加入資料庫失敗:`, data.message);
-                    alert(`課程「${course_name}」加入失敗: ${data.message}`);
-                    // 如果資料庫操作失敗，考慮是否需要從前端 UI 回滾該課程
+                    // 成功加入資料庫後，同步更新右側的「我的已選課程」列表
+                    updateSelectedCoursesDisplay();
+                } else if (data.status === 'warning') {
+                    showNotification(data.message, 'warning');
+                    console.warn(`⚠ 課程「${course_name}」(${course_code}) 已存在:`, data.message);
                 }
+                else {
+                    showNotification(data.message, 'error');
+                    console.error(`❌ 課程「${course_name}」(${course_code}) 加入資料庫失敗:`, data.message);
+                }
+                // 無論成功與否，都更新一下搜尋結果中的按鈕狀態
+                updateCourseStatus();
             })
             .catch(error => {
                 console.error(`❌ 課程「${course_name}」(${course_code}) 加入時發生網路錯誤:`, error);
-                alert(`課程「${course_name}」加入時發生錯誤，請檢查網路連線。`);
+                showNotification(`課程「${course_name}」加入時發生錯誤，請檢查網路連線。`, 'error');
             });
         }
 
-        function deleteSelectedCourse(course_code) { // 傳遞課程代碼進行刪除
+        // 從資料庫刪除課程
+        function deleteCourseFromDatabase(course_code) { 
             fetch("select_course.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1079,22 +982,28 @@ function fetchAndDisplaySelectedCourses() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
+                    showNotification(data.message);
                     console.log(`✅ 課程代碼 ${course_code} 已成功從資料庫移除。`);
+                    // 資料庫更新成功後，同步更新右側的「我的已選課程」列表
+                    updateSelectedCoursesDisplay();
+                    // 更新搜尋結果中的按鈕狀態
+                    updateCourseStatus();
                 } else {
+                    showNotification(`課程移除失敗: ${data.message}`, 'error');
                     console.error(`❌ 課程代碼 ${course_code} 從資料庫移除失敗:`, data.message);
-                    alert(`課程移除失敗: ${data.message}`);
                 }
             })
             .catch(error => {
                 console.error(`❌ 課程代碼 ${course_code} 移除時發生網路錯誤:`, error);
-                alert(`課程移除時發生錯誤，請檢查網路連線。`);
+                showNotification(`課程移除時發生錯誤，請檢查網路連線。`, 'error');
             });
         }
 
 
         // 初始化
         window.addEventListener("DOMContentLoaded", () => {
-            loadSelectedCourses(); // 載入已選課程 (包含固定及無固定時段)
+            initializeTimetableGrid(); // 先初始化空的課表網格
+            loadSelectedCoursesFromDatabase(); // 載入已選課程 (包含固定及無固定時段)
             triggerSearch(); // 載入可選課程
         });
     </script>

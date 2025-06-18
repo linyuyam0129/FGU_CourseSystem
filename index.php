@@ -17,63 +17,78 @@ $student_id = $_SESSION['student_id'] ?? '未知學號';
 $user_department = $_SESSION['department'] ?? '';
 $user_group = $_SESSION['user_group'] ?? ''; // 確保有組別資訊，如 '遊戲組' 或 '流音組'
 
-// --- 步驟 1: 從統一的 'courses' 表中獲取所有課程詳細資訊 ---
+// --- 步驟 1: 從 'courses' 表中獲取所有課程詳細資訊 ---
 // 這是所有可用課程的主列表，以 course_code 為鍵，方便快速查找
+// 包含 course_type 和 category，因為它們用於後續的學分歸類
 $sql_all_courses = "SELECT `course_code`, `course_name`, `credits`, `course_type`, `category` FROM `courses`";
 $stmt_all_courses = $conn->prepare($sql_all_courses);
 if (!$stmt_all_courses) {
-    die("準備所有課程查詢失敗: " . $conn->error);
+    die("準備所有課程基本資料查詢失敗: " . $conn->error);
 }
 $stmt_all_courses->execute();
 $result_all_courses = $stmt_all_courses->get_result();
 
-$courses_master_list = [];
+$courses_master_list = []; // 以 course_code 作為鍵的課程詳細資料
 while ($row = $result_all_courses->fetch_assoc()) {
     $courses_master_list[$row['course_code']] = $row;
 }
 $stmt_all_courses->close();
 
 
-// --- 步驟 2: 獲取使用者已完成和已選課程 ---
-$completed_course_codes = []; // 僅儲存已完成課程的課號，用於快速查找
-$selected_course_codes = []; // 僅儲存已選但未完成課程的課號
-$user_completed_courses_details = []; // 儲存已完成課程的完整細節，包含學期，用於學分計算和顯示
-$total_completed_credits = 0;
+// --- 步驟 2: 獲取使用者已完成和已選課程，並合併計算 ---
+// 儲存所有已完成/已選課程的詳細資料，包含學期，用於學分計算和顯示
+$user_combined_courses_details = [];
+$total_combined_credits = 0;
+$processed_course_codes = []; // 用於追蹤已處理的課程代碼，避免重複
 
-$sql_user_course_status = "
-    SELECT course_code, semester, 'completed' AS status FROM completed_courses WHERE user_id = ?
-    UNION ALL
-    SELECT course_code, semester, 'selected' AS status FROM selected_courses WHERE user_id = ?
-";
-$stmt_user_course_status = $conn->prepare($sql_user_course_status);
-if (!$stmt_user_course_status) {
-    die("準備使用者課程狀態查詢失敗: " . $conn->error);
-}
-$stmt_user_course_status->bind_param("ii", $user_id, $user_id);
-$stmt_user_course_status->execute();
-$user_course_status_result = $stmt_user_course_status->get_result();
-
-while ($row = $user_course_status_result->fetch_assoc()) {
-    $course_code = $row['course_code'];
-    // 確保課程存在於總課程列表中，才處理其狀態
-    if (isset($courses_master_list[$course_code])) {
-        $course_detail = $courses_master_list[$course_code];
-        if ($row['status'] === 'completed') {
-            if (!in_array($course_code, $completed_course_codes)) { // 避免重複處理
-                $completed_course_codes[] = $course_code;
-                $total_completed_credits += $course_detail['credits'];
-                // 合併課程詳細資料和用戶的修課狀態（學期）
-                $user_completed_courses_details[] = array_merge($course_detail, ['semester' => $row['semester'], 'status' => 'completed']);
-            }
-        } elseif ($row['status'] === 'selected') {
-            // 只有當課程未完成且未被標記為已選時才加入
-            if (!in_array($course_code, $completed_course_codes) && !in_array($course_code, $selected_course_codes)) {
-                $selected_course_codes[] = $course_code;
-            }
+// 2a. 先從 completed_courses 獲取
+$sql_completed = "SELECT course_code, semester FROM completed_courses WHERE user_id = ?";
+$stmt_completed = $conn->prepare($sql_completed);
+if ($stmt_completed) {
+    $stmt_completed->bind_param("i", $user_id);
+    $stmt_completed->execute();
+    $result_completed = $stmt_completed->get_result();
+    while ($row = $result_completed->fetch_assoc()) {
+        $course_code = $row['course_code'];
+        if (isset($courses_master_list[$course_code]) && !in_array($course_code, $processed_course_codes)) {
+            $course_detail = $courses_master_list[$course_code];
+            $user_combined_courses_details[] = array_merge($course_detail, ['semester' => $row['semester'], 'status' => '已完成']);
+            $total_combined_credits += $course_detail['credits'];
+            $processed_course_codes[] = $course_code; // 標記為已處理
         }
     }
+    $stmt_completed->close();
+} else {
+    error_log("準備已完成課程查詢失敗: " . $conn->error);
 }
-$stmt_user_course_status->close();
+
+// 2b. 再從 selected_courses 獲取 (只加入未在 completed_courses 中的課程)
+$sql_selected = "SELECT course_code, semester FROM selected_courses WHERE user_id = ?";
+$stmt_selected = $conn->prepare($sql_selected);
+if ($stmt_selected) {
+    $stmt_selected->bind_param("i", $user_id);
+    $stmt_selected->execute();
+    $result_selected = $stmt_selected->get_result();
+    while ($row = $result_selected->fetch_assoc()) {
+        $course_code = $row['course_code'];
+        // 只有當課程在 master list 中且未被處理過 (即不在 completed_courses 中) 才加入
+        if (isset($courses_master_list[$course_code]) && !in_array($course_code, $processed_course_codes)) {
+            $course_detail = $courses_master_list[$course_code];
+            $user_combined_courses_details[] = array_merge($course_detail, ['semester' => $row['semester'], 'status' => '已選']);
+            $total_combined_credits += $course_detail['credits'];
+            $processed_course_codes[] = $course_code; // 標記為已處理
+        }
+    }
+    $stmt_selected->close();
+} else {
+    error_log("準備已選課程查詢失敗: " . $conn->error);
+}
+
+// 根據學期對合併後的課程進行排序（可選，使顯示更有序）
+usort($user_combined_courses_details, function($a, $b) {
+    // 假設學期格式為 YYYY-S (例如 2024-1 或 113-1)
+    return strcmp($a['semester'], $b['semester']);
+});
 
 
 // --- 步驟 3: 從 program_definitions 表中獲取學程要求和學分範圍 ---
@@ -92,8 +107,8 @@ while ($row = $result_program_defs->fetch_assoc()) {
 }
 $stmt_program_defs->close();
 
-// 設置畢業總學分要求
-$graduation_credits_required = 128;
+// 設置畢業總學分要求 (如果 program_definitions 中有總學分要求，應該從那裡獲取)
+$graduation_credits_required = $program_credit_ranges['總畢業學分']['min'] ?? 128; // 假設有一個 '總畢業學分' 的定義
 
 
 // --- 步驟 4: 計算學程進度並識別未達成要求 ---
@@ -108,10 +123,9 @@ $completed_general_education_groups = []; // 追蹤通識學程各課群是否�
 $general_education_group_credits = []; // 追蹤通識學程各課群已獲得的學分
 
 // 定義通識課群的最低課程和學分要求
-// 這些數據應該與您在 SQL 腳本中填充 `courses` 表的 `category` 欄位一致
 $general_education_groups_with_min_credits = [
-    '中文能力課群' => ['min_courses' => 1, 'min_credits_per_course' => 3],
-    '外語能力課群' => ['min_courses' => 1, 'min_credits_per_course' => 3],
+    '中文能力' => ['min_courses' => 1, 'min_credits_per_course' => 3],
+    '外語能力' => ['min_courses' => 1, 'min_credits_per_course' => 3],
     '人文藝術學群' => ['min_courses' => 1, 'min_credits_per_course' => 3],
     '社會科學課群' => ['min_courses' => 1, 'min_credits_per_course' => 3],
     '自然科學課群' => ['min_courses' => 1, 'min_credits_per_course' => 3],
@@ -121,21 +135,116 @@ $general_education_groups_with_min_credits = [
     '共同教育課群' => ['min_courses' => 1, 'min_credits_per_course' => 0] // 體育等 0 學分課程
 ];
 
-// 從使用者已完成課程中計算通識學分和已完成課群
-foreach ($user_completed_courses_details as $course_detail) {
-    if (array_key_exists($course_detail['category'], $general_education_groups_with_min_credits)) {
-        $earned_program_credits['通識學程'] += $course_detail['credits'];
-        $completed_general_education_groups[$course_detail['category']] = true;
-        if (!isset($general_education_group_credits[$course_detail['category']])) {
-            $general_education_group_credits[$course_detail['category']] = 0;
+// 輔助函數：根據課程代碼判斷通識課群名稱
+// 該函數應該與 search_course.php 中的邏輯一致
+function getGenEdGroup($code) {
+    if ($code === null) return '';
+
+    if (in_array($code, ['GE111', 'GE112'])) return '中文能力';
+    if ($code >= 'GE121' && $code <= 'GE138') return '外語能力';
+    if ($code >= 'GE161' && $code <= 'GE204') return '共同教育課群'; // 更明確的名稱
+    if (($code >= 'GE001' && $code <= 'GE016') || ($code >= 'GE151' && $code <= 'GE154')) return '體育運動課群';
+    if ($code == 'GE250' || ($code >= 'GE501' && $code <= 'GE599')) return '人文藝術學群';
+    if (($code >= 'GE205' && $code <= 'GE249') || ($code >= 'GE430' && $code <= 'GE499') || ($code >= 'GE410' && $code <= 'GE419')) return '社會科學課群';
+    if (($code >= 'GE251' && $code <= 'GE258') || ($code >= 'GE301' && $code <= 'GE330')) return '自然科學課群';
+    if (($code >= 'GE259' && $code <= 'GE274') || ($code >= 'GE331' && $code <= 'GE333')) return '生命教育課群';
+    if ($code >= 'GE275' && $code <= 'GE299') return '生活教育課群';
+    if (($code >= 'GE280' && $code <= 'GE289') || ($code >= 'GE650' && $code <= 'GE655')) return '生涯教育課群';
+
+    return ''; // 如果不屬於任何通識課群
+}
+
+
+// 用於累積各學程學分 (更精確的 Chart.js 資料準備)
+$display_chart_credits = []; // 儲存用於 Chart.js 的學分數據
+$display_chart_colors = []; // 儲存用於 Chart.js 的顏色數據
+$chart_labels = []; // 儲存用於 Chart.js 的標籤
+
+// 定義顏色映射 (與 index.php 的圖表顏色一致)
+$chart_color_map = [
+    '必修' => '#FF6384',
+    '選修' => '#36A2EB',
+    '通識' => '#FFCE56', // 通識總體顏色
+    '共同教育課群' => '#4BC0C0',
+    '中文能力' => '#E0BBE4', // 柔和的紫羅蘭色
+    '外語能力' => '#957DAD', // 較深的紫羅蘭色
+    '人文藝術學群' => '#FFD1DC', // 淺粉色
+    '社會科學課群' => '#A2D5F2', // 天藍色
+    '自然科學課群' => '#FFEBCC', // 淺橙色
+    '生命教育課群' => '#D4EDDA', // 淺綠色
+    '生活教育課群' => '#FDEBD0', // 淺棕色
+    '生涯教育課群' => '#D7BDE2', // 薰衣草紫
+    '體育運動課群' => '#C3E6CB', // 另一種淺綠
+    '其他' => '#9966FF', // 紫色
+    '未知類型' => '#CCCCCC' // 灰色
+];
+
+// 重新計算各學程學分，確保 Chart.js 數據的精確性
+foreach ($user_combined_courses_details as $course_detail) {
+    $credits = (int)$course_detail['credits'];
+    $course_code = $course_detail['course_code'];
+    $course_type = $course_detail['course_type'] ?? '未知類型';
+    $category_from_db = $course_detail['category'] ?? ''; // 從 courses 表中獲取的 category
+
+    if ($course_type === '必修') {
+        if (!isset($display_chart_credits['必修'])) {
+            $display_chart_credits['必修'] = 0;
         }
-        $general_education_group_credits[$course_detail['category']] += $course_detail['credits'];
+        $display_chart_credits['必修'] += $credits;
+    } elseif ($course_type === '選修') {
+        if (!isset($display_chart_credits['選修'])) {
+            $display_chart_credits['選修'] = 0;
+        }
+        $display_chart_credits['選修'] += $credits;
+    } elseif ($course_type === '通識') {
+        $gen_ed_group = getGenEdGroup($course_code);
+        if (!empty($gen_ed_group)) {
+            if (!isset($display_chart_credits[$gen_ed_group])) {
+                $display_chart_credits[$gen_ed_group] = 0;
+            }
+            $display_chart_credits[$gen_ed_group] += $credits;
+
+            // 同時累積通識學程總學分
+            $earned_program_credits['通識學程'] += $credits;
+            $completed_general_education_groups[$gen_ed_group] = true; // 標記課群已修
+            if (!isset($general_education_group_credits[$gen_ed_group])) {
+                $general_education_group_credits[$gen_ed_group] = 0;
+            }
+            $general_education_group_credits[$gen_ed_group] += $credits;
+
+        } else {
+            // 如果通識課程沒有匹配到任何課群，歸類到「其他通識」
+            if (!isset($display_chart_credits['其他通識'])) {
+                $display_chart_credits['其他通識'] = 0;
+            }
+            $display_chart_credits['其他通識'] += $credits;
+        }
+    } else {
+        // 其他或未知類型課程
+        if (!isset($display_chart_credits['其他'])) {
+            $display_chart_credits['其他'] = 0;
+        }
+        $display_chart_credits['其他'] += $credits;
     }
+}
+
+// 根據 display_chart_credits 準備 Chart.js 的最終數據
+$chart_labels = array_keys($display_chart_credits);
+$chart_data = array_values($display_chart_credits);
+$chart_background_colors = [];
+
+foreach ($chart_labels as $label) {
+    $chart_background_colors[] = $chart_color_map[$label] ?? '#CCCCCC'; // 預設灰色
 }
 
 
 // --- 通識學程檢查訊息 ---
 $ge_missing_messages = [];
+$ge_required_total = $program_credit_ranges['通識學程']['min'] ?? 32;
+if ($earned_program_credits['通識學程'] < $ge_required_total) {
+    $ge_missing_messages[] = "通識學程總學分不足，目前已修 {$earned_program_credits['通識學程']} 學分，需 {$ge_required_total} 學分。";
+}
+
 foreach ($general_education_groups_with_min_credits as $group => $req) {
     $current_credits = $general_education_group_credits[$group] ?? 0;
     $has_completed_at_least_one = isset($completed_general_education_groups[$group]);
@@ -150,102 +259,61 @@ foreach ($general_education_groups_with_min_credits as $group => $req) {
         $ge_missing_messages[] = "【{$group}】已修課但學分不足，目前已修 {$current_credits} 學分，需至少 {$req['min_credits_per_course']} 學分。";
     }
 }
-if ($earned_program_credits['通識學程'] < ($program_credit_ranges['通識學程']['min'] ?? 32)) {
-    $ge_missing_messages[] = "通識學程總學分不足，目前已修 {$earned_program_credits['通識學程']} 學分，需 " . ($program_credit_ranges['通識學程']['min'] ?? 32) . " 學分。";
-}
+
 if (!empty($ge_missing_messages)) {
     $unfulfilled_requirements['通識學程'] = $ge_missing_messages;
 }
 
 
-// --- 系所專屬學程檢查 (核心、專業、跨領域) ---
-$department_specific_programs_to_check = [
-    '領域核心學程',
-    '領域專業學程',
-    '院跨領域特色學程'
-];
+// 定義簡化後的學分目標 (如果 program_definitions 中沒有提供，使用這些預設值)
+$simplified_core_credits_required = $program_credit_ranges['領域核心學程']['min'] ?? 40; // 預設 40 學分
+$simplified_professional_credits_required = $program_credit_ranges['領域專業學程']['min'] ?? 25; // 預設 25 學分
+$simplified_interdisciplinary_credits_required = $program_credit_ranges['院跨領域特色學程']['min'] ?? 9; // 預設 9 學分
 
-$program_display_courses = []; // 儲存每個學程的詳細課程列表，用於在 HTML 中顯示
+// 用於累積各學程學分
+$core_earned_credits = 0;
+$professional_earned_credits = 0;
+$interdisciplinary_earned_credits = 0;
 
-foreach ($department_specific_programs_to_check as $program_name) {
-    $unfulfilled_requirements[$program_name] = []; // 初始化該學程的未完成訊息
-    $current_program_earned_credits = 0;
-    $program_required_courses_details = []; // 儲存這個學程在該系所組別下的所有必修課程細節
+// Arrays to hold details of completed courses specific to these programs for display
+$completed_core_courses_details = [];
+$completed_professional_courses_details = [];
+$completed_interdisciplinary_courses_details = [];
 
-    // 根據 program_name 獲取 program_id
-    $current_program_id = $program_ids_map[$program_name] ?? null;
-
-    if ($current_program_id === null) {
-        error_log("錯誤: 在 program_definitions 中找不到學程ID: '{$program_name}'");
-        continue; // 跳過此學程的檢查
-    }
-
-    // 查詢 program_course_requirements (學程課程要求表)
-    // 結合 courses 表獲取課程詳細信息
-    // 結合 department_program_mapping 表根據使用者系所組別過濾
-    $sql_required_program_courses = "
-        SELECT
-            c.course_code,
-            c.course_name,
-            c.credits,
-            c.course_type,
-            c.category
-        FROM
-            program_course_requirements pcr
-        JOIN
-            courses c ON pcr.course_code = c.course_code
-        WHERE
-            pcr.program_id = ?
-            AND pcr.is_mandatory = TRUE
-            AND c.course_code IN ( -- 確保這些課程是該系所/組別的實際學程的一部分
-                SELECT course_code FROM program_course_requirements pcr_inner
-                JOIN department_program_mapping dpm_inner ON pcr_inner.program_id = dpm_inner.program_id
-                WHERE dpm_inner.department_name = ? AND dpm_inner.user_group = ? AND pcr_inner.program_id = ?
-            );
-    ";
-    $stmt_required_program_courses = $conn->prepare($sql_required_program_courses);
-    if (!$stmt_required_program_courses) {
-        error_log("準備 {$program_name} 必修課程查詢失敗: " . $conn->error);
+// 遍歷所有已完成/已選課程，計算各學程學分並收集詳細資訊
+foreach ($user_combined_courses_details as $course_detail) {
+    // 檢查是否為通識學程，如果是則跳過 (通識已單獨處理，避免重複計算)
+    if ($course_detail['course_type'] === '通識') {
         continue;
     }
-    // 注意綁定參數的順序和數量 (program_id, department_name, user_group, program_id)
-    $stmt_required_program_courses->bind_param("isii", $current_program_id, $user_department, $user_group, $current_program_id);
-    $stmt_required_program_courses->execute();
-    $result_required_program_courses = $stmt_required_program_courses->get_result();
 
-    while ($course = $result_required_program_courses->fetch_assoc()) {
-        $program_required_courses_details[] = $course; // 將課程加入顯示列表
-        if (in_array($course['course_code'], $completed_course_codes)) {
-            $current_program_earned_credits += $course['credits'];
-        } else {
-            $unfulfilled_requirements[$program_name][] = "未修讀：{$course['course_name']} ({$course['course_code']}) - {$course['credits']} 學分";
-        }
+    // 判斷是否為用戶系所的課程
+    // 這裡的判斷方式需要根據您的實際數據結構進行調整。
+    // 假設 user_department (例如 'CS') 會是 course_code 的前綴，或者 course_type 更精確地指示系所
+    $is_department_course = (strpos($course_detail['course_code'], $user_department) === 0);
+
+    if ($course_detail['course_type'] === '必修' && $is_department_course) {
+        // 判斷為領域核心學程 (系所必修)
+        $core_earned_credits += $course_detail['credits'];
+        $completed_core_courses_details[] = $course_detail;
+    } else if ($course_detail['course_type'] === '選修' && $is_department_course) {
+        // 判斷為領域專業學程 (系所選修)
+        $professional_earned_credits += $course_detail['credits'];
+        $completed_professional_courses_details[] = $course_detail;
+    } else if ($course_detail['course_type'] === '選修' && !$is_department_course) {
+        // 判斷為院跨領域特色學程 (非系所的選修)
+        $interdisciplinary_earned_credits += $course_detail['credits'];
+        $completed_interdisciplinary_courses_details[] = $course_detail;
     }
-    $stmt_required_program_courses->close();
-
-    // 儲存該學程的課程列表，供 HTML 渲染時使用
-    $program_display_courses[$program_name] = $program_required_courses_details;
-
-    // 檢查學分是否達到該學程的最低要求
-    $min_credits_for_program = $program_credit_ranges[$program_name]['min'] ?? 0;
-    if ($current_program_earned_credits < $min_credits_for_program) {
-        $unfulfilled_requirements[$program_name][] = "學分不足，目前已修 {$current_program_earned_credits} 學分，需 {$min_credits_for_program} 學分。";
-    }
-    // 更新該學程已獲得的總學分
-    $earned_program_credits[$program_name] = $current_program_earned_credits;
+    // 其他課程類型或不符合上述規則的課程，將不計入這三個學程的學分
 }
 
+$earned_program_credits['領域核心學程'] = $core_earned_credits;
+$earned_program_credits['領域專業學程'] = $professional_earned_credits;
+$earned_program_credits['院跨領域特色學程'] = $interdisciplinary_earned_credits;
 
-// --- 總畢業學分檢查 ---
-if ($total_completed_credits < $graduation_credits_required) {
-    $unfulfilled_requirements['總學分不足'] = ["目前總學分 {$total_completed_credits}，距離畢業所需 {$graduation_credits_required} 學分尚有不足。"];
-} else {
-    // 如果總學分已達標，確保這個訊息不會顯示
-    unset($unfulfilled_requirements['總學分不足']);
-}
 
-// --- 獲取所有未完成必修課程 (用於 "未完成必修課程" 標籤頁) ---
-// 這會列出在 `courses` 表中被標記為 '必修'，但使用者尚未完成或選修的所有課程。
+// --- 獲取所有未完成必修課程 (用於 "未完成必修課程" 標籤頁 和 領域核心學程的未修課程) ---
 $sql_all_missing_required = "
     SELECT c.`course_code`, c.`course_name`, c.`credits`, c.`course_type`, c.`category`
     FROM `courses` c
@@ -258,12 +326,72 @@ $sql_all_missing_required = "
     ORDER BY c.category, c.course_code;
 ";
 $stmt_all_missing_required = $conn->prepare($sql_all_missing_required);
+$all_missing_required_courses_list = []; // 初始化為空陣列
 if (!$stmt_all_missing_required) {
-    die("準備所有未完成必修課程查詢失敗: " . $conn->error);
+    error_log("準備所有未完成必修課程查詢失敗: " . $conn->error);
+} else {
+    $stmt_all_missing_required->bind_param("ii", $user_id, $user_id);
+    $stmt_all_missing_required->execute();
+    $temp_all_missing_required_result = $stmt_all_missing_required->get_result(); // 使用臨時變數
+
+    if ($temp_all_missing_required_result) { // 檢查 get_result() 是否成功
+        while ($row = $temp_all_missing_required_result->fetch_assoc()) {
+            $all_missing_required_courses_list[] = $row; // 填充列表
+        }
+        $temp_all_missing_required_result->close(); // 關閉結果集
+    } else {
+        error_log("獲取所有未完成必修課程結果失敗: " . $stmt_all_missing_required->error);
+    }
+    $stmt_all_missing_required->close(); // 關閉語句
 }
-$stmt_all_missing_required->bind_param("ii", $user_id, $user_id);
-$stmt_all_missing_required->execute();
-$all_missing_required_result = $stmt_all_missing_required->get_result();
+
+
+// --- 檢查領域核心學程 ---
+$missing_core_messages = [];
+if ($earned_program_credits['領域核心學程'] < $simplified_core_credits_required) {
+    $missing_core_messages[] = "學分不足，目前已修 {$earned_program_credits['領域核心學程']} 學分，需 {$simplified_core_credits_required} 學分。";
+}
+
+// 收集實際未修的系所必修課程列表
+$missing_core_courses_for_display = [];
+foreach ($all_missing_required_courses_list as $missing_course) {
+    // 再次判斷是否為系所必修，與上方計算學分邏輯一致
+    $is_missing_department_course = (strpos($missing_course['course_code'], $user_department) === 0);
+
+    if ($missing_course['course_type'] === '必修' && $is_missing_department_course) {
+        $missing_core_messages[] = "未修讀：{$missing_course['course_name']} ({$missing_course['course_code']}) - {$missing_course['credits']} 學分";
+        $missing_core_courses_for_display[] = $missing_course; // 儲存供顯示
+    }
+}
+if (!empty($missing_core_messages)) {
+    $unfulfilled_requirements['領域核心學程'] = $missing_core_messages;
+} else {
+    unset($unfulfilled_requirements['領域核心學程']);
+}
+
+
+// --- 檢查領域專業學程 ---
+if ($earned_program_credits['領域專業學程'] < $simplified_professional_credits_required) {
+    $unfulfilled_requirements['領域專業學程'] = ["學分不足，目前已修 {$earned_program_credits['領域專業學程']} 學分，需 {$simplified_professional_credits_required} 學分。"];
+} else {
+    unset($unfulfilled_requirements['領域專業學程']);
+}
+
+// --- 檢查院跨領域特色學程 ---
+if ($earned_program_credits['院跨領域特色學程'] < $simplified_interdisciplinary_credits_required) {
+    $unfulfilled_requirements['院跨領域特色學程'] = ["學分不足，目前已修 {$earned_program_credits['院跨領域特色學程']} 學分，需 {$simplified_interdisciplinary_credits_required} 學分。"];
+} else {
+    unset($unfulfilled_requirements['院跨領域特色學程']);
+}
+
+
+// --- 總畢業學分檢查 ---
+if ($total_combined_credits < $graduation_credits_required) {
+    $unfulfilled_requirements['總學分不足'] = ["目前總學分 {$total_combined_credits}，距離畢業所需 {$graduation_credits_required} 學分尚有不足。"];
+} else {
+    unset($unfulfilled_requirements['總學分不足']);
+}
+
 
 ?>
 
@@ -275,6 +403,7 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
     <title>畢業門檻狀態</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         /* --- 整體佈局與基礎樣式 --- */
         body {
@@ -367,6 +496,8 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             justify-content: space-between;
             margin-bottom: 20px;
             cursor: pointer; /* 指示可折疊性 */
+            padding-bottom: 10px; /* Add padding to separate from content */
+            border-bottom: 1px solid #eee; /* Light separator */
         }
         .panel-header.collapsed .toggle-icon::before {
             content: "\f0d7"; /* Font Awesome 向下箭頭 */
@@ -377,6 +508,10 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             font-weight: 900;
             margin-left: 10px;
             color: #777;
+            transition: transform 0.3s ease; /* Smooth rotation */
+        }
+        .panel-header.collapsed .toggle-icon::before {
+            transform: rotate(180deg); /* Rotate for collapsed state */
         }
 
         h3 {
@@ -395,6 +530,7 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
         h3.input-section i { color: #FF9800; } /* 橙色用於輸入 */
         h3.credit i { color: #673ab7; } /* 紫色用於學分 */
         h3.course-list i { color: #009688; } /* 青色用於課程列表 */
+        h3.analysis i { color: #8BC34A; } /* 分析圖標的淺綠色 */
 
         /* 可折疊內容 */
         .panel-content {
@@ -402,10 +538,12 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             overflow: hidden;
             transition: max-height 0.5s ease-out, opacity 0.5s ease-out;
             opacity: 1;
+            padding-top: 15px; /* Add padding after header */
         }
         .panel-content.hidden {
             max-height: 0;
             opacity: 0;
+            padding-top: 0; /* Remove padding when hidden */
         }
 
         /* 資訊區塊樣式 */
@@ -440,6 +578,9 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             background-color: #fcfcfc;
             transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
+        .input-group input[type="text"]::placeholder {
+            color: #999;
+        }
         .input-group input[type="text"]:focus,
         .input-group select:focus {
             border-color: #3f51b5;
@@ -464,7 +605,9 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             transform: translateY(-1px);
         }
 
-        /* 學分顯示與進度條 */
+        /* 學分顯示與進度條 - (This section appears to be unused in the HTML structure,
+           as the credit display is handled by the chart boxes. I'll keep the styles
+           but note its potential redundancy.) */
         .credit-display {
             background-color: #e8f5e9; /* 淺綠色背景 */
             border: 1px solid #c8e6c9;
@@ -549,6 +692,7 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
 
         .tab-content {
             display: none;
+            padding-top: 10px; /* Add some padding to content below tabs */
         }
         .tab-content.active {
             display: block;
@@ -644,17 +788,49 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
             .input-group input[type="text"] {
                 flex: 1 1 100%;
             }
+             /* 確保響應式佈局下，學程區塊也能良好顯示 */
+            .program-analysis-panel {
+                min-width: unset;
+                width: 100%;
+                max-width: 700px; /* 為了表格閱讀體驗，稍微放寬一些 */
+            }
+            /* The .program-section styles below are for elements not present in the provided HTML.
+               Assuming these are for a hypothetical future expansion, I will keep them but note
+               they don't apply to the current structure. */
+            .program-overview {
+                flex-direction: column;
+                align-items: flex-end; /* 右側對齊 */
+                gap: 5px;
+            }
+            .program-section .panel-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            .program-section .panel-header h4.program-title {
+                font-size: 18px;
+            }
+            .program-section .panel-header .toggle-icon {
+                position: absolute;
+                right: 20px;
+                top: 18px;
+            }
+            .program-analysis-panel th, .program-analysis-panel td {
+                padding: 8px; /* 減少內邊距 */
+                font-size: 13px; /* 縮小字體 */
+            }
         }
 
-        /* ----------------------- 新增的學程檢查區塊樣式 ----------------------- */
+        /* ----------------------- 學程分析區塊樣式 ----------------------- */
         .program-analysis-panel {
             background: white;
             border-radius: 15px;
             padding: 25px 30px;
             box-shadow: 0 6px 20px rgba(0,0,0,0.1);
-            margin-bottom: 25px; /* 與其他面板分開 */
+            margin-bottom: 25px;
             display: flex;
             flex-direction: column;
+            align-items: center; /* 圖表居中 */
         }
 
         .program-analysis-panel h3 {
@@ -667,87 +843,100 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
         .program-analysis-panel h3 i {
             margin-right: 10px;
             font-size: 22px;
-            color: #8BC34A; /* 分析圖標的淺綠色 */
+            color: #8BC34A;
         }
 
-        .program-analysis-panel .status-message {
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-weight: bold;
-            font-size: 16px;
+        /* Chart styles */
+        .chart-container {
             display: flex;
+            flex-wrap: wrap;
+            justify-content: center; /* Centered charts */
+            gap: 40px; /* Increased gap between charts */
+            margin-top: 20px;
+            width: 100%; /* Take full width */
+        }
+
+        .chart-box {
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px; /* Increased padding */
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            text-align: center;
+            flex: 1; /* Allow charts to grow and shrink */
+            max-width: 400px; /* Adjusted max-width for larger charts in two columns */
+            min-width: 280px; /* Ensure charts are large enough on smaller screens */
+            display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 10px;
-        }
-        .program-analysis-panel .status-message.success {
-            background-color: #e8f5e9;
-            border: 1px solid #a5d6a7;
-            color: #2e7d32;
-        }
-        .program-analysis-panel .status-message.warning {
-            background-color: #fff3e0;
-            border: 1px solid #ffcc80;
-            color: #ef6c00;
-        }
-        .program-analysis-panel .status-message.danger {
-            background-color: #ffebee;
-            border: 1px solid #ef9a9a;
-            color: #c62828;
         }
 
-        .program-analysis-panel .program-summary {
-            margin-bottom: 20px;
-        }
-        .program-analysis-panel .program-summary h4 {
-            font-size: 20px;
-            color: #555;
-            margin-bottom: 15px;
-            border-bottom: 1px dashed #e0e0e0;
-            padding-bottom: 8px;
-        }
-        .program-analysis-panel .program-summary p {
-            font-size: 16px;
-            margin-bottom: 8px;
-        }
-        .program-analysis-panel .program-summary p span {
-            font-weight: bold;
+        .chart-box h4 {
             color: #3f51b5;
+            margin-top: 0;
+            margin-bottom: 20px; /* Increased margin below title */
+            font-size: 1.5em; /* Larger title */
+            font-weight: 700;
         }
 
-        .program-analysis-panel table {
-            width: 100%;
-            border-collapse: collapse;
+        .chart-box canvas {
+            max-width: 100%; /* Make canvas responsive within its box */
+            height: auto; /* Maintain aspect ratio */
+            min-height: 200px; /* Ensure a minimum height for the canvas */
+            max-height: 300px; /* Set a maximum height to control size */
+        }
+
+        .chart-box p {
+            font-size: 1.1em;
             margin-top: 15px;
-        }
-        .program-analysis-panel th, .program-analysis-panel td {
-            border: 1px solid #e0e0e0;
-            padding: 10px;
-            text-align: left;
-            font-size: 14px;
-        }
-        .program-analysis-panel th {
-            background-color: #f7f7f7;
             font-weight: 600;
-            color: #444;
+            color: #555;
         }
-        .program-analysis-panel .status-cell {
-            font-weight: bold;
-        }
-        .program-analysis-panel .status-cell.completed { color: #28a745; }
-        .program-analysis-panel .status-cell.not-completed { color: #dc3545; }
-        .program-analysis-panel .status-cell.selected { color: #007bff; }
-        .program-analysis-panel .status-cell.info { color: #6c757d; }
 
-        .program-analysis-panel .missing-list {
-            margin-top: 15px;
-            list-style: disc;
-            padding-left: 20px;
+        /* New styles for notification */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #4CAF50; /* Green for success */
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            opacity: 0;
+            transform: translateY(-20px);
+            animation: slideIn 0.5s forwards, fadeOut 0.5s 2.5s forwards;
+            font-weight: 600;
         }
-        .program-analysis-panel .missing-list li {
-            color: #dc3545;
-            margin-bottom: 5px;
-            font-size: 15px;
+        .notification.error {
+            background-color: #F44336; /* Red for error */
+        }
+
+        @keyframes slideIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .chart-box {
+                flex: 1 1 90%; /* Single column, nearly full width on small screens */
+                max-width: 90%;
+            }
+            .notification {
+                width: calc(100% - 40px);
+                left: 20px;
+                right: 20px;
+                text-align: center;
+            }
         }
     </style>
 </head>
@@ -755,9 +944,9 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
     <div class="header">
         畢業門檻狀態
         <div class="header-buttons">
-            <button onclick="location.href='login.php'"><i class="fas fa-sign-out-alt"></i> 登出</button>
             <button onclick="location.href='course.php'"><i class="fas fa-chalkboard"></i> 輔助選課</button>
             <button onclick="location.href='Downloads.html'"><i class="fas fa-download"></i> 下載手冊</button>
+            <button onclick="location.href='login.php'"><i class="fas fa-sign-out-alt"></i> 登出</button>
         </div>
     </div>
 
@@ -783,7 +972,7 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
                 <span class="toggle-icon"></span>
             </div>
             <div class="panel-content">
-                <p style="font-size: 14px; color: #555; margin-bottom: 15px;">請選擇課程類型並輸入您已修過的課號 (注意：此為模擬功能，實際後端需自行處理)</p>
+                <p style="font-size: 14px; color: #555; margin-bottom: 15px;">請選擇課程類型並輸入您已修過的課號</p>
                 <div class="input-group">
                     <select id="course_type">
                         <option value="GE">通識課程 GE</option>
@@ -830,173 +1019,24 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
         </div>
     </div>
 
-    <!-- 畢業學程分析區塊 -->
     <div class="container" style="margin-top: -10px;">
         <div class="panel program-analysis-panel" style="flex-grow: 2; min-width: 600px;">
             <div class="panel-header" onclick="togglePanel(this)">
-                <h3 class="analysis"><i class="fas fa-tasks"></i> 畢業學程完成度分析</h3>
+                <h3 class="analysis"><i class="fas fa-chart-pie"></i> 畢業學程完成度分析</h3>
                 <span class="toggle-icon"></span>
             </div>
             <div class="panel-content">
-                <?php
-                $overall_status_class = 'success';
-                $overall_status_text = '恭喜！目前所有畢業學程和總學分要求都已達成或在進度中。';
-
-                $all_unfulfilled = [];
-                foreach ($unfulfilled_requirements as $program => $messages) {
-                    if (!empty($messages)) {
-                        $all_unfulfilled[$program] = $messages;
-                    }
-                }
-
-                if (!empty($all_unfulfilled)) {
-                    $overall_status_class = 'danger'; // 預設為危險狀態
-                    $overall_status_text = '以下為尚未達成的學程要求：';
-                    // 如果只有總學分不足，可以給予警告狀態而不是危險
-                    if (count($all_unfulfilled) === 1 && isset($all_unfulfilled['總學分不足'])) {
-                         $overall_status_class = 'warning';
-                    }
-                }
-                ?>
-                <div class="status-message <?= $overall_status_class ?>">
-                    <i class="fas <?= $overall_status_class === 'success' ? 'fa-award' : ($overall_status_class === 'warning' ? 'fa-exclamation-triangle' : 'fa-times-circle') ?>"></i>
-                    <p><?= $overall_status_text ?></p>
-                </div>
-
-                <?php if (!empty($all_unfulfilled)): ?>
-                    <ul class="missing-list">
-                        <?php foreach ($all_unfulfilled as $program => $messages): ?>
-                            <li><strong><?= htmlspecialchars($program) ?>:</strong>
-                                <ul style="list-style: circle; margin-left: 20px;">
-                                    <?php foreach ($messages as $msg): ?>
-                                        <li><?= htmlspecialchars($msg) ?></li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
-
-                <div class="program-summary">
-                    <h4>校通識學程 (總學分：<?= $program_credit_ranges['通識學程']['min'] ?? 32 ?>)</h4>
-                    <p>已修學分：<span><?= $earned_program_credits['通識學程'] ?></span> / 需 <?= $program_credit_ranges['通識學程']['min'] ?? 32 ?> 學分</p>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>課群</th>
-                                <th>學分要求</th>
-                                <th>已修學分</th>
-                                <th>狀態</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($general_education_groups_with_min_credits as $group => $req): ?>
-                                <?php
-                                $current_ge_credits = $general_education_group_credits[$group] ?? 0;
-                                $status_class = 'not-completed';
-                                $status_text = '未完成';
-                                $group_fulfilled = isset($completed_general_education_groups[$group]) && ($current_ge_credits >= $req['min_credits_per_course'] || $req['min_credits_per_course'] === 0);
-
-                                if ($group_fulfilled) {
-                                    $status_class = 'completed';
-                                    $status_text = '已完成';
-                                } else if (isset($completed_general_education_groups[$group]) && $current_ge_credits < $req['min_credits_per_course']) {
-                                     $status_class = 'not-completed';
-                                     $status_text = '學分不足';
-                                }
-                                ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($group) ?></td>
-                                    <td><?= $req['min_credits_per_course'] > 0 ? "至少 " . $req['min_credits_per_course'] . " 學分" : "至少一門課" ?></td>
-                                    <td><?= $current_ge_credits ?></td>
-                                    <td class="status-cell <?= $status_class ?>"><?= $status_text ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-
-                <?php
-                // 動態生成系所專屬學程區塊
-                $department_specific_program_order = [
-                    '領域核心學程',
-                    '領域專業學程',
-                    '院跨領域特色學程'
-                ];
-
-                foreach ($department_specific_program_order as $program_name):
-                    $courses_for_display = $program_display_courses[$program_name] ?? [];
-                    $min_credits = $program_credit_ranges[$program_name]['min'] ?? 0;
-                    $max_credits = $program_credit_ranges[$program_name]['max'] ?? 'N/A'; // 如果未定義，顯示 N/A
-                    $earned_current_program_credits = $earned_program_credits[$program_name];
-                ?>
-                    <div class="program-summary">
-                        <h4><?= htmlspecialchars($program_name) ?> (學分：<?= $min_credits ?>-<?= $max_credits ?>)</h4>
-                        <p>已修學分：<span><?= $earned_current_program_credits ?></span> / 需 <?= $min_credits ?> 學分</p>
-                        <?php if (!empty($unfulfilled_requirements[$program_name]) && count($unfulfilled_requirements[$program_name]) > 1): ?>
-                            <ul class="missing-list">
-                                <?php foreach ($unfulfilled_requirements[$program_name] as $msg): ?>
-                                    <li><?= htmlspecialchars($msg) ?></li>
-                                <?php endforeach; ?>
-                            </ul>
-                        <?php endif; ?>
-                        <?php if (!empty($courses_for_display)): ?>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>課號</th>
-                                    <th>科目名稱</th>
-                                    <th>學分</th>
-                                    <th>修別</th>
-                                    <th>狀態</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($courses_for_display as $course): ?>
-                                    <?php
-                                    $status_class = 'not-completed';
-                                    $status_text = '未修';
-                                    if (in_array($course['course_code'], $completed_course_codes)) {
-                                        $status_class = 'completed';
-                                        $status_text = '已修';
-                                    } elseif (in_array($course['course_code'], $selected_course_codes)) {
-                                        $status_class = 'selected';
-                                        $status_text = '已選';
-                                    }
-                                    ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars($course['course_code']) ?></td>
-                                        <td><?= htmlspecialchars($course['course_name']) ?></td>
-                                        <td><?= $course['credits'] ?></td>
-                                        <td><?= htmlspecialchars($course['course_type']) ?></td>
-                                        <td class="status-cell <?= $status_class ?>"><?= $status_text ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                        <?php else: ?>
-                            <p style="color: #6c757d; font-style: italic;">目前無此學程的必修課程資料，請確認資料庫配置或學生系所組別是否正確對應。</p>
-                        <?php endif; ?>
+                <div class="chart-container">
+                    <div class="chart-box">
+                        <h4>學分分佈</h4>
+                        <canvas id="creditDistributionChart"></canvas>
+                        <p>已修總學分: <?= $total_combined_credits ?> 學分</p>
                     </div>
-                <?php endforeach; ?>
-            </div>
-        </div>
-    </div>
-
-
-    <div class="container" style="margin-top: -10px;">
-        <div class="panel credit-panel">
-            <div class="panel-header" onclick="togglePanel(this)">
-                <h3 class="credit"><i class="fas fa-graduation-cap"></i> 總學分數統計</h3>
-                <span class="toggle-icon"></span>
-            </div>
-            <div class="panel-content">
-                <div class="credit-display">
-                    已修學分數：<span><?= $total_completed_credits ?></span> / <?= $graduation_credits_required ?> 學分數
-                    <div class="progress-bar-container">
-                        <div class="progress-bar-fill" id="creditProgressBar" style="width: 0%;"></div>
+                    <div class="chart-box">
+                        <h4>總學分進度</h4>
+                        <canvas id="totalCreditsChart"></canvas>
+                        <p>已修: <?= $total_combined_credits ?> / <?= $graduation_credits_required ?> 學分</p>
                     </div>
-                    <small>畢業門檻需修滿 <?= $graduation_credits_required ?> 學分數。通識教育32學分數，院與系則依各自規定。</small>
                 </div>
             </div>
         </div>
@@ -1005,30 +1045,30 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
     <div class="container">
         <div class="panel course-lists-panel" style="flex: 2; min-width: 600px;">
             <div class="panel-header" onclick="togglePanel(this)">
-                <h3 class="course-list"><i class="fas fa-list-alt"></i> 課程清單</h3>
+                <h3 class="course-list"><i class="fas fa-check-circle"></i> 已完成及已選課程清單 (<?= count($user_combined_courses_details) ?>)</h3>
                 <span class="toggle-icon"></span>
             </div>
             <div class="panel-content">
                 <div class="tabs">
-                    <button class="tab-button active" onclick="openTab(event, 'completedCourses')">
-                        <i class="fas fa-check-circle"></i> 已完成課程 (<?= count($user_completed_courses_details) ?>)
+                    <button class="tab-button active" onclick="openTab(event, 'combinedCourses')">
+                        <i class="fas fa-book-reader"></i> 所有已修/已選課程
                     </button>
                     <button class="tab-button" onclick="openTab(event, 'missingCourses')">
-                        <i class="fas fa-exclamation-circle"></i> 未完成必修課程 (<?= $all_missing_required_result->num_rows ?>)
+                        <i class="fas fa-exclamation-circle"></i> 未完成必修課程 (<?= count($all_missing_required_courses_list) ?>)
                     </button>
                 </div>
 
-                <div id="completedCourses" class="tab-content active course-list completed">
+                <div id="combinedCourses" class="tab-content active course-list completed">
                     <ul>
-                        <?php if (empty($user_completed_courses_details)): ?>
-                            <li>目前沒有已完成課程。</li>
+                        <?php if (empty($user_combined_courses_details)): ?>
+                            <li>目前沒有已完成或已選課程。</li>
                         <?php else: ?>
-                            <?php foreach ($user_completed_courses_details as $row): ?>
+                            <?php foreach ($user_combined_courses_details as $row): ?>
                                 <li>
                                     <strong><?= htmlspecialchars($row['course_name']) ?></strong>（<?= htmlspecialchars($row['course_code']) ?>）<br>
                                     <span>學分數：<?= $row['credits'] ?>｜修別：<?= htmlspecialchars($row['course_type']) ?>｜類別：<?= htmlspecialchars($row['category']) ?></span>
                                     <?php if (!empty($row['semester'])): ?>
-                                    <br><span>完成學期：<?= htmlspecialchars($row['semester']) ?></span>
+                                    <br><span>學期：<?= htmlspecialchars($row['semester']) ?>｜狀態：<?= htmlspecialchars($row['status']) ?></span>
                                     <?php endif; ?>
                                 </li>
                             <?php endforeach; ?>
@@ -1038,161 +1078,264 @@ $all_missing_required_result = $stmt_all_missing_required->get_result();
 
                 <div id="missingCourses" class="tab-content course-list missing">
                     <ul>
-                        <?php if ($all_missing_required_result->num_rows === 0): ?>
+                        <?php if (empty($all_missing_required_courses_list)): ?>
                             <li>恭喜！您已完成所有必修課程。</li>
                         <?php else: ?>
-                            <?php while ($row = $all_missing_required_result->fetch_assoc()): ?>
+                            <?php foreach ($all_missing_required_courses_list as $row): ?>
                                 <li>
                                     <strong><?= htmlspecialchars($row['course_name']) ?></strong>（<?= htmlspecialchars($row['course_code']) ?>）<br>
-                                    <span>學分數：<?= $row['credits'] ?>｜類別：<?= htmlspecialchars($row['category']) ?></span>
+                                    <span>學分數：<?= $row['credits'] ?>｜修別：<?= htmlspecialchars($row['course_type']) ?>｜類別：<?= htmlspecialchars($row['category']) ?></span>
                                 </li>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         <?php endif; ?>
                     </ul>
                 </div>
             </div>
         </div>
     </div>
+    
+    <div id="notification-container"></div>
 
     <script>
         // 從 PHP 獲取數據
         const graduationCredits = <?= $graduation_credits_required ?>;
-        const currentCredits = <?= $total_completed_credits ?>;
+        const currentCredits = <?= $total_combined_credits ?>; // 總計已完成 + 已選學分
+
+        // 從 PHP 獲取用於學分分佈圖的數據
+        const creditDistributionLabels = <?= json_encode($chart_labels, JSON_UNESCAPED_UNICODE) ?>;
+        const creditDistributionData = <?= json_encode($chart_data) ?>;
+        const creditDistributionColors = <?= json_encode($chart_background_colors) ?>;
+
 
         document.addEventListener('DOMContentLoaded', function() {
-            updateProgressBar();
-            // 可選: 在小螢幕上預設折疊所有面板
-            if (window.innerWidth <= 992) { // 調整面板斷點
-                document.querySelectorAll('.panel-header').forEach(header => {
-                    const content = header.nextElementSibling;
-                    if (content && !content.classList.contains('hidden')) { // 如果內容未隱藏，則折疊
-                        header.classList.add('collapsed');
-                        content.classList.add('hidden');
-                    }
-                });
-            }
+            // Set initial state for panels on load
+            document.querySelectorAll('.panel-header').forEach(header => {
+                const content = header.nextElementSibling;
+                // Keep '個人資訊' and '登錄已修課程' open by default on larger screens
+                // and '畢業學程完成度分析' open.
+                // Collapse '課程清單' by default.
+                if (header.closest('.course-lists-panel') && window.innerWidth > 992) {
+                     header.classList.add('collapsed');
+                     content.classList.add('hidden');
+                } else if (window.innerWidth <= 992) { // On small screens, collapse all
+                    header.classList.add('collapsed');
+                    content.classList.add('hidden');
+                }
+            });
+
+            // 初始化圓餅圖
+            initDoughnutCharts();
         });
 
-        // 更新進度條視覺效果
-        function updateProgressBar() {
-            const progressBar = document.getElementById('creditProgressBar');
-            let percentage = (currentCredits / graduationCredits) * 100;
-            if (percentage > 100) percentage = 100; // 超過 100% 則上限為 100%
-
-            progressBar.style.width = percentage + '%';
-            progressBar.textContent = Math.round(percentage) + '%';
-
-            // 根據進度條顏色變化
-            if (percentage < 30) {
-                progressBar.classList.add('danger');
-                progressBar.classList.remove('warning');
-            } else if (percentage < 70) {
-                progressBar.classList.add('warning');
-                progressBar.classList.remove('danger');
-            } else {
-                progressBar.classList.remove('danger', 'warning');
-            }
-        }
-
-        // 折疊/展開面板
+        // Toggle panel visibility
         function togglePanel(header) {
-            const content = header.nextElementSibling; // .panel-content div
+            const content = header.nextElementSibling;
             header.classList.toggle('collapsed');
             content.classList.toggle('hidden');
         }
 
-        // 開啟指定標籤頁
+        // Open specific tab
         function openTab(evt, tabName) {
             let i, tabcontent, tablinks;
 
-            // 隱藏所有標籤內容
             tabcontent = document.getElementsByClassName("tab-content");
             for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-                tabcontent[i].classList.remove('active'); // 移除活躍類別以實現過渡
+                tabcontent[i].classList.remove('active');
             }
 
-            // 移除所有標籤按鈕的活躍類別
             tablinks = document.getElementsByClassName("tab-button");
             for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
+                tablinks[i].classList.remove('active');
             }
 
-            // 顯示當前標籤內容並將其標記為活躍
-            document.getElementById(tabName).style.display = "block";
             document.getElementById(tabName).classList.add('active');
-            evt.currentTarget.className += " active";
+            evt.currentTarget.classList.add('active');
         }
 
-        // 模擬新增課程功能
+        // Function to display notifications
+        function showNotification(message, type = 'success') {
+            const container = document.getElementById('notification-container');
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            container.appendChild(notification);
+
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                notification.style.transform = 'translateY(-20px)';
+                notification.addEventListener('transitionend', () => notification.remove());
+            }, 3000);
+        }
+
+        // Add course function
         function addCourse() {
             const typePrefix = document.getElementById("course_type").value;
             let codeSuffix = document.getElementById("course_code").value.trim();
 
             if (codeSuffix === '') {
-                alert('請輸入課程代碼！');
+                showNotification('請輸入課程代碼！', 'error');
                 return;
             }
 
-            // 組合完整的課號 (例如 'GE' + '111' -> 'GE111')
-            const fullCourseCode = typePrefix + codeSuffix;
+            // 組合完整課號，如果不是 GE 開頭的，就直接用輸入的課號，避免重複前綴
+            let fullCourseCode;
+            if (typePrefix === 'GE' && !codeSuffix.startsWith('GE')) {
+                 fullCourseCode = typePrefix + codeSuffix;
+            } else if (typePrefix !== 'GE' && !codeSuffix.startsWith(typePrefix)) {
+                 fullCourseCode = typePrefix + codeSuffix;
+            } else {
+                fullCourseCode = codeSuffix; // 如果已經包含了前綴，直接使用
+            }
 
-            // 清空輸入框和重設下拉選單，提升使用者體驗
+            // 清空輸入欄位
             document.getElementById("course_code").value = '';
-            document.getElementById("course_type").value = 'GE'; // 重設為預設值
+            document.getElementById("course_type").value = 'GE'; // 重置為預設值
 
-            // AJAX 請求到後端 `add_course.php`
-            // 注意：此處假設 `add_course.php` 存在且能正確處理資料庫操作
+
             fetch("add_course.php", {
                 method: "POST",
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded'
                 },
-                body: `course_code=${encodeURIComponent(fullCourseCode)}&user_id=<?= $user_id ?>` // 將 user_id 也傳遞給後端
+                // 只傳 course_code，user_id 會從 session 獲取
+                body: `course_code=${encodeURIComponent(fullCourseCode)}`
             })
             .then(response => {
                 if (!response.ok) {
-                    // 如果 HTTP 狀態碼不是 2xx，則嘗試讀取錯誤訊息
                     return response.text().then(text => {
                         throw new Error(`HTTP 錯誤！狀態碼: ${response.status}, 響應內容: ${text}`);
                     });
                 }
-                // 檢查響應的 Content-Type 是否為 application/json
                 const contentType = response.headers.get('content-type');
                 if (contentType && contentType.includes('application/json')) {
-                    return response.json(); // 解析 JSON
+                    return response.json();
                 } else {
-                    // 如果不是 JSON，但 HTTP 狀態碼是 OK，可能是 PHP 輸出錯誤或警告
                     return response.text().then(text => {
                         throw new Error(`非預期的響應格式，預期 JSON 但收到: ${text}`);
                     });
                 }
             })
             .then(data => {
-                // 根據後端回傳的狀態顯示訊息
-                if (data.status === 'success') {
-                    alert(data.message); // 例如：「課程成功加入已選列表！」
-                    location.reload(); // 成功後重新載入頁面以顯示新課程
+                if (data.status === 'success' || data.status === 'warning') { // 處理成功和警告
+                    showNotification(data.message, data.status);
+                    // 延遲重載頁面以顯示通知
+                    setTimeout(() => { location.reload(); }, 1500);
                 } else {
-                    alert("錯誤: " + data.message); // 顯示錯誤訊息
+                    showNotification("錯誤: " + data.message, 'error');
                 }
             })
             .catch(error => {
-                // 捕獲網路錯誤或 JSON 解析錯誤
                 console.error('Fetch error:', error);
-                alert("新增課程時發生網路錯誤或伺服器問題：" + error.message);
+                showNotification("新增課程時發生網路錯誤或伺服器問題：" + error.message, 'error');
             });
+        }
+
+        // Initialize Doughnut Charts
+        function initDoughnutCharts() {
+            // 學分分佈圖
+            const creditDistributionCtx = document.getElementById('creditDistributionChart').getContext('2d');
+            new Chart(creditDistributionCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: creditDistributionLabels, // 使用 PHP 傳過來的動態標籤
+                    datasets: [{
+                        data: creditDistributionData, // 使用 PHP 傳過來的動態數據
+                        backgroundColor: creditDistributionColors, // 使用 PHP 傳過來的動態顏色
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right', // 放置在右側以節省空間
+                            labels: {
+                                font: {
+                                    size: 12 // 調整圖例字體大小
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed;
+                                    const total = context.dataset.data.reduce((sum, current) => sum + current, 0);
+                                    const percentage = (total > 0 ? (value / total * 100) : 0).toFixed(1) + '%';
+                                    return `${label}: ${value} 學分 (${percentage})`;
+                                }
+                            },
+                            bodyFont: {
+                                size: 14
+                            }
+                        }
+                    }
+                }
+            });
+
+            // 總學分進度圖
+            const totalCtx = document.getElementById('totalCreditsChart').getContext('2d');
+            const totalRemainingCredits = Math.max(0, graduationCredits - currentCredits);
+            new Chart(totalCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['已修學分', '剩餘學分'],
+                    datasets: [{
+                        data: [currentCredits, totalRemainingCredits],
+                        backgroundColor: [
+                            'rgba(63, 81, 181, 0.8)', // Blue (Earned)
+                            'rgba(255, 159, 64, 0.8)' // Orange (Remaining)
+                        ],
+                        borderColor: [
+                            'rgba(63, 81, 181, 1)',
+                            'rgba(255, 159, 64, 1)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                font: {
+                                    size: 14
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed;
+                                    const total = context.dataset.data.reduce((sum, current) => sum + current, 0);
+                                    const percentage = (total > 0 ? (value / total * 100) : 0).toFixed(1) + '%';
+                                    return `${label}: ${value} 學分 (${percentage})`;
+                                }
+                            },
+                            bodyFont: {
+                                size: 14
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // HTML 實體化函數，防止 XSS 攻擊
+        function htmlspecialchars(str) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
         }
     </script>
 </body>
 </html>
 
 <?php
-// 關閉資料庫連線和剩餘的預處理語句
-// 確保 $all_missing_required_result 已經被使用過
-if (isset($all_missing_required_result) && $all_missing_required_result instanceof mysqli_result) {
-    $all_missing_required_result->close();
-}
-// 關閉資料庫連線
 $conn->close();
 ?>

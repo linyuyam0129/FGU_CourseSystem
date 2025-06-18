@@ -35,10 +35,15 @@ $user_data = $res_user->fetch_assoc();
 $student_id = $user_data['student_id'] ?? '';
 $stmt_user->close();
 
-// --- 新增：處理獲取已選課程的 GET 請求 ---
+// --- 處理獲取已選課程的 GET 請求 (用於 course.php 的課表載入) ---
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_selected') {
     try {
-        $sql_get_selected = "SELECT course_code FROM selected_courses WHERE user_id = ?";
+        $sql_get_selected = "
+            SELECT sc.course_code, cl.`科目名稱`, cl.`學分數`, cl.`時間`, cl.`教室`, cl.`教師`
+            FROM selected_courses sc
+            JOIN course_list cl ON sc.course_code = cl.`課程代碼`
+            WHERE sc.user_id = ?
+        ";
         $stmt_get_selected = $conn->prepare($sql_get_selected);
         if (!$stmt_get_selected) {
             throw new Exception('準備獲取已選課程失敗: ' . $conn->error);
@@ -49,13 +54,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['act
 
         $current_selected_courses = [];
         while ($row = $result_get_selected->fetch_assoc()) {
-            $current_selected_courses[] = $row['course_code'];
+            $current_selected_courses[] = $row; // 回傳完整課程資訊
         }
         $stmt_get_selected->close();
 
         $response['status'] = 'success';
         $response['message'] = '已成功獲取已選課程。';
-        $response['selected_courses'] = $current_selected_courses; // 回傳課程代碼陣列
+        $response['courses'] = $current_selected_courses; // 回傳課程代碼陣列
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
         exit(); // 立即退出，不執行後續的 POST 邏輯
     } catch (Exception $e) {
@@ -97,26 +102,32 @@ if ($stmt_name) {
 
 
 if ($action === 'add') {
-    // 檢查是否已選
-    $check = $conn->prepare("SELECT * FROM selected_courses WHERE user_id = ? AND course_code = ?");
-    if (!$check) {
+    // 檢查課程是否已經在 completed_courses 或 selected_courses 中
+    $sql_check_status = "
+        SELECT course_code FROM completed_courses WHERE user_id = ? AND course_code = ?
+        UNION ALL
+        SELECT course_code FROM selected_courses WHERE user_id = ? AND course_code = ?
+    ";
+    $stmt_check_status = $conn->prepare($sql_check_status);
+    if (!$stmt_check_status) {
         http_response_code(500);
         $response['message'] = '資料庫檢查準備失敗: ' . $conn->error;
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
         exit();
     }
-    $check->bind_param("is", $user_id, $course_code);
-    $check->execute();
-    if ($check->get_result()->num_rows > 0) {
-        // 如果已選，回傳成功狀態但帶有訊息，告知前端已存在
-        $response['status'] = 'warning'; // 設為 warning 讓前端可以區分
-        $response['message'] = "課程「{$course_name_from_db}」已選擇。";
+    $stmt_check_status->bind_param("isis", $user_id, $course_code, $user_id, $course_code);
+    $stmt_check_status->execute();
+    if ($stmt_check_status->get_result()->num_rows > 0) {
+        // 如果已在 completed_courses 或 selected_courses 中，回傳警告
+        $response['status'] = 'warning';
+        $response['message'] = "課程「{$course_name_from_db}」已在您的已完成或已選列表中，無需重複加入。";
         echo json_encode($response, JSON_UNESCAPED_UNICODE);
         exit();
     }
-    $check->close(); // 關閉 statement
+    $stmt_check_status->close();
 
-    // 執行插入
+
+    // 執行插入到 selected_courses
     $insert = $conn->prepare("INSERT INTO selected_courses (user_id, student_id, course_code, class_id, semester) VALUES (?, ?, ?, ?, ?)");
     if (!$insert) {
         http_response_code(500);
@@ -137,6 +148,7 @@ if ($action === 'add') {
     $insert->close(); // 關閉 statement
 }
 elseif ($action === 'drop') {
+    // 執行從 selected_courses 刪除
     $delete = $conn->prepare("DELETE FROM selected_courses WHERE user_id = ? AND course_code = ?");
     if (!$delete) {
         http_response_code(500);

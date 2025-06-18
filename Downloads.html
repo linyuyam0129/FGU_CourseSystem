@@ -1,126 +1,319 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>學程手冊下載</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color: #f7f7f7;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      color: #333;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>學程手冊下載</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        /* Base styles - adjusted for yellowish theme */
+        body {
+            font-family: 'Noto Sans TC', 'Segoe UI', sans-serif;
+            background-color: #F8F5EC; /* Very light yellow/cream background */
+            color: #343a40;
+            margin: 0;
+            line-height: 1.6;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
 
-    .container {
-      background-color: #ffffff;
-      padding: 30px 40px;
-      border-radius: 16px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-      text-align: center;
-      max-width: 960px;
-      width: 100%;
-    }
+        .header {
+            background-color: #FFC107; /* Warm yellow/amber header */
+            color: #343a40; /* Dark text for contrast */
+            padding: 15px 30px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: 700;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
 
-    h1 {
-      color: #2e7d32;
-      font-size: 28px;
-      margin-bottom: 20px;
-    }
+        .header-buttons {
+            display: flex;
+            gap: 15px;
+        }
 
-    p {
-      font-size: 16px;
-      margin-bottom: 25px;
-      color: #555;
-    }
+        .header-buttons button {
+            background-color: #343a40; /* Dark background for buttons */
+            color: #FFC107; /* Yellow text for contrast */
+            border: 1px solid #343a40;
+            padding: 9px 18px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 15px;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .header-buttons button:hover {
+            background-color: #FFD54F; /* Lighter yellow on hover */
+            color: #343a40;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            transform: translateY(-2px);
+        }
+        .header-buttons button[onclick*="login.php"] {
+            background-color: #d32f2f; /* Consistent red for logout */
+            color: white;
+            border-color: #d32f2f;
+        }
+        .header-buttons button[onclick*="login.php"]:hover {
+            background-color: #c62828;
+            border-color: #c62828;
+        }
 
-    .manuals {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      justify-items: center;
-      margin-top: 10px;
-    }
+        /* --- New/Revised styles for Downloads page - adjusted for yellowish theme --- */
 
-    .manuals a {
-      text-decoration: none;
-      background-color: #00796b;
-      color: white;
-      padding: 12px 24px;
-      border-radius: 10px;
-      transition: background-color 0.3s ease, transform 0.2s;
-      width: 100%;
-      max-width: 220px;
-      text-align: center;
-    }
+        .main-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px 25px;
+            box-sizing: border-box;
+            width: 100%;
+        }
 
-    .manuals a:hover {
-      background-color: #004d40;
-      transform: scale(1.05);
-    }
+        .card-container {
+            background-color: #ffffff;
+            padding: 50px 60px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 900px;
+            width: 100%;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
 
-    .nav-buttons {
-      display: flex;
-      justify-content: center;
-      gap: 15px;
-      margin-bottom: 25px;
-    }
+        h1.page-title {
+            color: #5D4037; /* Dark brown for heading */
+            font-size: 36px;
+            margin-bottom: 25px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        h1.page-title i {
+            font-size: 32px;
+            color: #FFA000; /* Deep orange/amber for icon */
+        }
 
-    .nav-buttons a {
-      background-color: #ff8a65;
-      color: white;
-      padding: 10px 20px;
-      border-radius: 6px;
-      text-decoration: none;
-      transition: background-color 0.3s ease;
-    }
+        p.description {
+            font-size: 18px;
+            margin-bottom: 40px;
+            color: #795548; /* Medium brown for description */
+            line-height: 1.8;
+            max-width: 600px;
+        }
 
-    .nav-buttons a:hover {
-      background-color: #e64a19;
-    }
+        .manuals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 25px;
+            width: 100%;
+            justify-items: center;
+        }
 
-    /* 響應式設計 */
-    @media (max-width: 768px) {
-      .manuals {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
+        .manual-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            background-color: #FFFDE7; /* Very light yellow for items */
+            color: #5D4037; /* Dark brown text color */
+            padding: 30px 20px;
+            border-radius: 15px;
+            border: 1px solid #FFECB3; /* Light yellow border */
+            transition: all 0.3s ease;
+            width: 100%;
+            max-width: 250px;
+            box-sizing: border-box;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            text-align: center;
+        }
 
-    @media (max-width: 480px) {
-      .manuals {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+        .manual-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            background-color: #FFF9C4; /* Lighter yellow on hover */
+            border-color: #FFC107; /* Yellow border highlights on hover */
+        }
+
+        .manual-item i {
+            font-size: 48px;
+            color: #FFC107; /* Main yellow color for icon */
+            margin-bottom: 15px;
+            transition: color 0.3s ease;
+        }
+
+        .manual-item:hover i {
+            color: #FFA000; /* Darker yellow/orange icon on hover */
+        }
+
+        .manual-item span {
+            font-size: 20px;
+            font-weight: 700;
+            color: #343a40; /* Darker text for year */
+        }
+
+        /* Responsive adjustments - retained from previous version, generally work with new colors */
+        @media (max-width: 992px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 15px;
+            }
+            .header-buttons {
+                margin-top: 15px;
+                flex-wrap: wrap;
+                justify-content: center;
+                width: 100%;
+            }
+            .header-buttons button {
+                flex: 1 1 auto;
+            }
+            .card-container {
+                padding: 40px 30px;
+                max-width: 700px;
+            }
+            h1.page-title {
+                font-size: 30px;
+                gap: 10px;
+            }
+            h1.page-title i {
+                font-size: 28px;
+            }
+            p.description {
+                font-size: 16px;
+                margin-bottom: 30px;
+            }
+            .manuals-grid {
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            }
+            .manual-item {
+                padding: 25px 15px;
+            }
+            .manual-item i {
+                font-size: 40px;
+            }
+            .manual-item span {
+                font-size: 18px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .card-container {
+                padding: 30px 20px;
+                max-width: 95%;
+            }
+            h1.page-title {
+                font-size: 26px;
+                flex-direction: column;
+                gap: 5px;
+            }
+            h1.page-title i {
+                font-size: 24px;
+            }
+            p.description {
+                font-size: 14px;
+                margin-bottom: 25px;
+            }
+            .manuals-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            .manual-item {
+                max-width: 80%;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .card-container {
+                padding: 25px 15px;
+            }
+            .manual-item {
+                max-width: 90%;
+                padding: 20px 10px;
+            }
+            .manual-item i {
+                font-size: 36px;
+            }
+            .manual-item span {
+                font-size: 16px;
+            }
+        }
+    </style>
 </head>
 <body>
 
-<div class="container">
-  <div class="nav-buttons">    
-    <a href="login.php">登出</a>
-    <a href="index.php">畢業門檻統計</a>
-    <a href="course.php">選課程</a>
-  </div>
+<div class="header">
+    學程手冊下載
+    <div class="header-buttons">
+        <button onclick="location.href='index.php'"><i class="fas fa-chart-pie"></i> 畢業門檻</button>
+        <button onclick="location.href='course.php'"><i class="fas fa-chalkboard"></i> 輔助選課</button>
+        <button onclick="location.href='login.php'"><i class="fas fa-sign-out-alt"></i> 登出</button>
+    </div>
+</div>
 
-  <h1>學程手冊下載</h1>
-  <p>請選擇並下載學年度的學程手冊：</p>
+<div class="main-content">
+    <div class="card-container">
+        <h1 class="page-title"><i class="fas fa-file-pdf"></i> 學程手冊下載中心</h1>
+        <p class="description">歡迎來到學程手冊下載專區。在此頁面，您可以便捷地瀏覽並下載各學年度的學程手冊，以查閱詳細的課程規劃與學分要求。</p>
 
-  <div class="manuals">
-    <a href="學程手冊/113學年度學程手冊.pdf" download>113 學年度</a>
-    <a href="學程手冊/112學年度學程手冊.pdf" download>112 學年度</a>
-    <a href="學程手冊/111學年度學程手冊.pdf" download>111 學年度</a>
-    <a href="學程手冊/110學年度學程手冊.pdf" download>110 學年度</a>
-    <a href="學程手冊/109學年度學程手冊.pdf" download>109 學年度</a>
-    <a href="學程手冊/108學年度學程手冊.pdf" download>108 學年度</a>
-    <a href="學程手冊/107學年度學程手冊.pdf" download>107 學年度</a>
-    <a href="學程手冊/106學年度學程手冊.pdf" download>106 學年度</a>
-    <a href="學程手冊/105學年度學程手冊.pdf" download>105 學年度</a>
-  </div>
+        <div class="manuals-grid">
+            <a href="學程手冊/113學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>113 學年度</span>
+            </a>
+            <a href="學程手冊/112學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>112 學年度</span>
+            </a>
+            <a href="學程手冊/111學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>111 學年度</span>
+            </a>
+            <a href="學程手冊/110學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>110 學年度</span>
+            </a>
+            <a href="學程手冊/109學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>109 學年度</span>
+            </a>
+            <a href="學程手冊/108學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>108 學年度</span>
+            </a>
+            <a href="學程手冊/107學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>107 學年度</span>
+            </a>
+            <a href="學程手冊/106學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>106 學年度</span>
+            </a>
+            <a href="學程手冊/105學年度學程手冊.pdf" download class="manual-item">
+                <i class="fas fa-download"></i>
+                <span>105 學年度</span>
+            </a>
+        </div>
+    </div>
 </div>
 
 </body>
